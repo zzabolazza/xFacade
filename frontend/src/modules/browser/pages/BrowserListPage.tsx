@@ -119,6 +119,7 @@ export function BrowserListPage() {
     handleStartDirect,
     handleStop,
     handleRestart,
+    handleFocus,
   } = useBrowserProfileActions({
     profiles,
     setProxyErrorModal,
@@ -487,6 +488,7 @@ export function BrowserListPage() {
         onRefreshProfiles={() => { void loadProfiles() }}
         onStart={(profileId) => { void handleStart(profileId) }}
         onStop={(profileId) => { void handleStop(profileId) }}
+        onFocus={(profileId) => { void handleFocus(profileId) }}
         onRestart={(profileId) => { void handleRestart(profileId) }}
         onOpenKeywords={openKwModal}
         onOpenExtensions={openExtensionModal}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
-import { Copy, Download, Key, Loader2, MoreHorizontal, Play, Puzzle, Repeat2, RotateCcw, Settings, Square, Trash2, Wifi } from 'lucide-react'
+import { Copy, Download, Focus, Key, Loader2, MoreHorizontal, Play, Puzzle, Repeat2, RotateCcw, Settings, Square, Trash2, Wifi } from 'lucide-react'
 
 import { Badge, Button, Table } from '../../../shared/components'
 import type { TableColumn } from '../../../shared/components/Table'
@@ -39,6 +39,7 @@ interface BrowserProfilesPanelProps {
   onRefreshProfiles: () => void
   onStart: (profileId: string) => void
   onStop: (profileId: string) => void
+  onFocus: (profileId: string) => void
   onRestart: (profileId: string) => void
   onOpenKeywords: (profile: BrowserProfile) => void
   onOpenExtensions: (profile: BrowserProfile) => void
@@ -330,6 +331,7 @@ function BrowserProfileCard({
   onRefreshProfiles,
   onStart,
   onStop,
+  onFocus,
   onRestart,
   onOpenKeywords,
   onOpenExtensions,
@@ -350,6 +352,7 @@ function BrowserProfileCard({
   onRefreshProfiles: () => void
   onStart: (profileId: string) => void
   onStop: (profileId: string) => void
+  onFocus: (profileId: string) => void
   onRestart: (profileId: string) => void
   onOpenKeywords: (profile: BrowserProfile) => void
   onOpenExtensions: (profile: BrowserProfile) => void
@@ -389,10 +392,15 @@ function BrowserProfileCard({
 
         <div className="flex items-center gap-1 flex-wrap">
           {profile.running ? (
-            <Button size="sm" variant="secondary" onClick={() => onStop(profile.profileId)} title={isStopping ? '停止中' : '停止'} loading={isStopping}>
-              {!isStopping && <Square className="h-3.5 w-3.5 shrink-0" />}
-              {isStopping ? '停止中' : '停止'}
-            </Button>
+            <>
+              <Button size="sm" variant="secondary" onClick={() => onStop(profile.profileId)} title={isStopping ? '停止中' : '停止'} loading={isStopping}>
+                {!isStopping && <Square className="h-3.5 w-3.5 shrink-0" />}
+                {isStopping ? '停止中' : '停止'}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => onFocus(profile.profileId)} title="聚焦窗口" disabled={isBusy}>
+                <Focus className="h-3.5 w-3.5 shrink-0" />聚焦
+              </Button>
+            </>
           ) : (
             <Button
               size="sm"
@@ -474,6 +482,7 @@ export function BrowserProfilesPanel({
   onRefreshProfiles,
   onStart,
   onStop,
+  onFocus,
   onRestart,
   onOpenKeywords,
   onOpenExtensions,
@@ -602,7 +611,7 @@ export function BrowserProfilesPanel({
     {
       key: 'actions',
       title: '操作',
-      width: 248,
+      width: 280,
       align: 'right',
       render: (_, record) => {
         const isStarting = isProfileStarting(record.profileId)
@@ -613,9 +622,14 @@ export function BrowserProfilesPanel({
         return (
           <div className="flex justify-end gap-1.5 whitespace-nowrap">
             {record.running ? (
-              <Button size="icon" variant="secondary" onClick={() => onStop(record.profileId)} title="停止" loading={isStopping}>
-                {!isStopping && <Square className="h-3.5 w-3.5 shrink-0" />}
-              </Button>
+              <>
+                <Button size="icon" variant="secondary" onClick={() => onStop(record.profileId)} title="停止" loading={isStopping}>
+                  {!isStopping && <Square className="h-3.5 w-3.5 shrink-0" />}
+                </Button>
+                <Button size="icon" variant="ghost" onClick={() => onFocus(record.profileId)} title="聚焦窗口" disabled={isBusy}>
+                  <Focus className="h-3.5 w-3.5 shrink-0" />
+                </Button>
+              </>
             ) : (
               <Button
                 size="icon"
@@ -680,6 +694,7 @@ export function BrowserProfilesPanel({
                     onRefreshProfiles={onRefreshProfiles}
                     onStart={onStart}
                     onStop={onStop}
+                    onFocus={onFocus}
                     onRestart={onRestart}
                     onOpenKeywords={onOpenKeywords}
                     onOpenExtensions={onOpenExtensions}

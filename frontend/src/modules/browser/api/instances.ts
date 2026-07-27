@@ -70,6 +70,25 @@ export async function restartBrowserInstance(profileId: string): Promise<Browser
   return startBrowserInstance(profileId)
 }
 
+export interface BrowserInstanceFocusResult {
+  raised: boolean
+  flashed: boolean
+  warning?: string
+}
+
+export async function focusBrowserInstance(profileId: string): Promise<BrowserInstanceFocusResult> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserInstanceFocus) {
+    const result = await bindings.BrowserInstanceFocus(profileId)
+    return {
+      raised: Boolean(result?.raised),
+      flashed: Boolean(result?.flashed),
+      warning: typeof result?.warning === 'string' ? result.warning : undefined,
+    }
+  }
+  return { raised: true, flashed: true }
+}
+
 export async function openBrowserUrl(profileId: string, targetUrl: string): Promise<boolean> {
   const bindings: any = await getBindings()
   if (bindings?.BrowserInstanceOpenUrl) {

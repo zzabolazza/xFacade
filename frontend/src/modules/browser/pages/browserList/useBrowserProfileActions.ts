@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from 'react'
 import { toast } from '../../../../shared/components'
 import {
   deleteBrowserProfile,
+  focusBrowserInstance,
   restartBrowserInstance,
   startBrowserInstance,
   startBrowserInstanceDirect,
@@ -138,6 +139,19 @@ export function useBrowserProfileActions({
     }
   }
 
+  const handleFocus = async (profileId: string) => {
+    try {
+      const result = await focusBrowserInstance(profileId)
+      if (result.warning) {
+        toast.warning(result.warning)
+      } else {
+        toast.success('已聚焦实例窗口')
+      }
+    } catch (error: any) {
+      toast.error(resolveActionErrorMessage(error, '聚焦实例失败'))
+    }
+  }
+
   const handleDelete = async (profileId: string) => {
     await deleteBrowserProfile(profileId)
     toast.success('配置已删除')
@@ -149,6 +163,7 @@ export function useBrowserProfileActions({
     handleStartDirect,
     handleStop,
     handleRestart,
+    handleFocus,
     handleDelete,
   }
 }

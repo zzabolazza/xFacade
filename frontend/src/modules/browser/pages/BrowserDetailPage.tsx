@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Copy, Globe, Play, RefreshCw, RotateCcw, Square } from 'lucide-react'
+import { Copy, Focus, Globe, Play, RefreshCw, RotateCcw, Square } from 'lucide-react'
 import { Badge, Button, Card, Input, Table, toast } from '../../../shared/components'
 import type { TableColumn } from '../../../shared/components/Table'
 import type { BrowserProfile, BrowserTab } from '../types'
@@ -8,6 +8,7 @@ import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import {
   fetchBrowserProfiles,
   fetchBrowserTabs,
+  focusBrowserInstance,
   openBrowserUrl,
   regenerateBrowserProfileCode,
   restartBrowserInstance,
@@ -187,6 +188,19 @@ export function BrowserDetailPage() {
     }
   }
 
+  const handleFocus = async () => {
+    try {
+      const result = await focusBrowserInstance(profile.profileId)
+      if (result.warning) {
+        toast.warning(result.warning)
+      } else {
+        toast.success('已聚焦实例窗口')
+      }
+    } catch (error: any) {
+      toast.error(resolveActionErrorMessage(error, '聚焦实例失败'))
+    }
+  }
+
   const tabsColumns: TableColumn<BrowserTab>[] = [
     { key: 'title', title: '标题' },
     { key: 'url', title: '地址' },
@@ -355,10 +369,16 @@ export function BrowserDetailPage() {
           <Card title="快捷操作" subtitle="快速控制实例">
             <div className="flex flex-wrap items-center gap-2">
               {profile.running ? (
-                <Button size="sm" variant="secondary" onClick={handleStop} loading={isStopping} disabled={isBusy && !isStopping}>
-                  {!isStopping && <Square className="w-4 h-4" />}
-                  {isStopping ? '停止中' : '停止'}
-                </Button>
+                <>
+                  <Button size="sm" variant="secondary" onClick={handleStop} loading={isStopping} disabled={isBusy && !isStopping}>
+                    {!isStopping && <Square className="w-4 h-4" />}
+                    {isStopping ? '停止中' : '停止'}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => { void handleFocus() }} disabled={isBusy}>
+                    <Focus className="w-4 h-4" />
+                    聚焦
+                  </Button>
+                </>
               ) : (
                 <Button size="sm" onClick={handleStart} loading={isStarting} disabled={isBusy && !isStarting}>
                   {!isStarting && <Play className="w-4 h-4" />}

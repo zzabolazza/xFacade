@@ -123,22 +123,33 @@ func (a *App) prepareBrowserStartPlan(input browserStartInput, profile *BrowserP
 	totalReadyTimeout := time.Duration(maxStartAttempts) * startReadyTimeout
 	restoreLastSession := browserRestoreLastSession(a.config)
 	extensionDirs := a.browserMgr.EnabledExtensionDirsForProfile(input.ProfileID)
+	a.ensureProfileLaunchCode(profile)
+	var privacyVoices []browser.SpeechVoice
 	if browserPrivacySpoofSpeechVoicesEnabled(a.config) {
 		launchLang := effectiveLaunchLanguage(append(append([]string{}, profile.FingerprintArgs...), append(sanitizedProfileLaunchArgs, sanitizedExtraLaunchArgs...)...))
-		privacyExtensionDir, err := browser.EnsureManagedPrivacyExtension(userDataDir, launchLang)
-		if err != nil {
-			startErr := fmt.Errorf("实例启动失败：内置隐私扩展生成失败。原因：%w。", err)
-			logger.New("Browser").Error("内置隐私扩展生成失败",
-				logger.F("profile_id", input.ProfileID),
-				logger.F("user_data_dir", userDataDir),
-				logger.F("error", err.Error()),
-				logger.F("reason", startErr.Error()),
-			)
-			profile.LastError = startErr.Error()
-			return nil, startErr
-		}
-		extensionDirs = append(extensionDirs, privacyExtensionDir)
+		privacyVoices = browser.SpeechVoicesForLanguage(launchLang)
 	}
+	managedExtensionDir, err := browser.EnsureManagedExtension(userDataDir, browser.ManagedExtensionOptions{
+		Identity: browser.IdentityInfo{
+			Name:  profile.ProfileName,
+			Code:  profile.LaunchCode,
+			Color: browser.IdentityColorForProfileID(profile.ProfileId),
+			Proxy: browser.FormatIdentityProxyLabel(effectiveProxy, a.resolveIdentityProxyName(input, profile, effectiveProxy)),
+		},
+		PrivacyVoices: privacyVoices,
+	})
+	if err != nil {
+		startErr := fmt.Errorf("实例启动失败：内置托管扩展生成失败。原因：%w。", err)
+		logger.New("Browser").Error("内置托管扩展生成失败",
+			logger.F("profile_id", input.ProfileID),
+			logger.F("user_data_dir", userDataDir),
+			logger.F("error", err.Error()),
+			logger.F("reason", startErr.Error()),
+		)
+		profile.LastError = startErr.Error()
+		return nil, startErr
+	}
+	extensionDirs = append(extensionDirs, managedExtensionDir)
 	defaultStartURLs := mergeStartURLs(browserDefaultStartURLs(a.config), bookmarkStartURLs(bookmarks))
 	launchTargets, deferredStartTargets := buildBrowserLaunchTargets(
 		input.StartURLs,

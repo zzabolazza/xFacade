@@ -109,3 +109,25 @@ func resolveTemporaryBrowserStartProxy(proxyID string, proxyConfig string, proxi
 	}
 	return "", "", fmt.Errorf("代理ID不存在（proxy id not found: %s），且未提供 proxyConfig", proxyID)
 }
+
+func (a *App) resolveIdentityProxyName(input browserStartInput, profile *BrowserProfile, effectiveProxy string) string {
+	if strings.TrimSpace(effectiveProxy) == "" || strings.EqualFold(strings.TrimSpace(effectiveProxy), "direct://") {
+		return "直连"
+	}
+
+	proxyID := strings.TrimSpace(profile.ProxyId)
+	if input.hasTemporaryProxy() {
+		if id := strings.TrimSpace(input.TemporaryProxyID); id != "" && !strings.EqualFold(id, temporaryDirectProxyID) {
+			proxyID = id
+		}
+	}
+	if proxyID == "" {
+		return ""
+	}
+	for _, item := range a.getLatestProxies() {
+		if strings.EqualFold(strings.TrimSpace(item.ProxyId), proxyID) {
+			return strings.TrimSpace(item.ProxyName)
+		}
+	}
+	return ""
+}

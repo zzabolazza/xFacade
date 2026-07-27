@@ -3,12 +3,8 @@ package browser
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 )
-
-const managedPrivacyExtensionDirName = "Facade Managed Privacy Extension"
 
 type SpeechVoice struct {
 	Name         string `json:"name"`
@@ -18,45 +14,9 @@ type SpeechVoice struct {
 	Default      bool   `json:"default"`
 }
 
-func EnsureManagedPrivacyExtension(userDataDir string, lang string) (string, error) {
-	userDataDir = strings.TrimSpace(userDataDir)
-	if userDataDir == "" {
-		return "", fmt.Errorf("user data directory is empty")
-	}
-	extensionDir := filepath.Join(userDataDir, managedPrivacyExtensionDirName)
-	if err := os.MkdirAll(extensionDir, 0o755); err != nil {
-		return "", fmt.Errorf("create managed privacy extension directory: %w", err)
-	}
-
-	voices := speechVoicesForLanguage(lang)
-	manifest := `{
-  "manifest_version": 3,
-  "name": "Facade Managed Privacy",
-  "version": "1.0.0",
-  "description": "Managed browser privacy shims for Facade profiles.",
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["voices.js"],
-      "run_at": "document_start",
-      "all_frames": true,
-      "world": "MAIN"
-    }
-  ]
-}
-`
-	if err := os.WriteFile(filepath.Join(extensionDir, "manifest.json"), []byte(manifest), 0o644); err != nil {
-		return "", fmt.Errorf("write managed privacy extension manifest: %w", err)
-	}
-
-	script, err := buildVoicesShimScript(voices)
-	if err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(extensionDir, "voices.js"), []byte(script), 0o644); err != nil {
-		return "", fmt.Errorf("write managed privacy extension script: %w", err)
-	}
-	return extensionDir, nil
+// SpeechVoicesForLanguage returns the managed speechSynthesis voice list for lang.
+func SpeechVoicesForLanguage(lang string) []SpeechVoice {
+	return speechVoicesForLanguage(lang)
 }
 
 func buildVoicesShimScript(voices []SpeechVoice) (string, error) {
