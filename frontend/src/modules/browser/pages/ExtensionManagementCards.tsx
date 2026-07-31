@@ -327,7 +327,7 @@ export function InstalledExtensionCard({ item, viewMode, busy, updating, onRestr
           ) : null}
           <Button type="button" size="sm" variant="secondary" onClick={() => onRestrictProfiles(item)}>
             <Users className="h-4 w-4" />
-            限制实例
+            适用实例
           </Button>
           <Button type="button" size="sm" variant="secondary" onClick={() => onUpdate(item)} loading={updating}>
             <RotateCw className="h-4 w-4" />

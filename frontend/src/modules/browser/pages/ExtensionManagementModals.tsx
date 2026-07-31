@@ -97,7 +97,7 @@ export function ExtensionProfileLimitModal({ open, extension, allExtensions, onC
         })
         .map((profile) => profile.profileId))
     }).catch((error: any) => {
-      toast.error(error?.message || '加载实例限制失败')
+      toast.error(error?.message || '加载适用实例失败')
     }).finally(() => setLoading(false))
   }, [open, extension])
 
@@ -137,10 +137,10 @@ export function ExtensionProfileLimitModal({ open, extension, allExtensions, onC
       }).filter((task): task is Promise<BrowserProfileExtensionSettings> => task !== null)
 
       if (saveTasks.length > 0) await Promise.all(saveTasks)
-      toast.success('实例限制已保存')
+      toast.success('适用实例已保存')
       onClose()
     } catch (error: any) {
-      toast.error(error?.message || '保存实例限制失败')
+      toast.error(error?.message || '保存适用实例失败')
     } finally {
       setSaving(false)
     }
@@ -150,7 +150,7 @@ export function ExtensionProfileLimitModal({ open, extension, allExtensions, onC
     <Modal
       open={open}
       onClose={onClose}
-      title={extension ? `限制实例：${extension.name || extension.extensionId}` : '限制实例'}
+      title={extension ? `适用实例：${extension.name || extension.extensionId}` : '适用实例'}
       width="680px"
       footer={(
         <>

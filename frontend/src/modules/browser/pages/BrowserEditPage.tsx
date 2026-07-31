@@ -2,13 +2,15 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { FolderOpen, Layers } from 'lucide-react'
 import { Button, Card, ConfirmModal, FormItem, Input, Modal, Select, Textarea, toast } from '../../../shared/components'
-import type { BrowserCore, BrowserProfileInput, BrowserProxy, BrowserGroup, ProxyLocationResolveResult } from '../types'
+import type { BrowserCore, BrowserExtension, BrowserProfileInput, BrowserProxy, BrowserGroup, ProxyLocationResolveResult } from '../types'
 import { browserProxyResolveLocation, createBrowserProfile, fetchAllTags, fetchBrowserCores, fetchBrowserProfiles, fetchBrowserProxies, fetchBrowserSettings, fetchGroups, openUserDataDir, updateBrowserProfile, validateProxyConfig } from '../api'
+import { fetchBrowserExtensions, fetchBrowserProfileExtensionSettings, saveBrowserProfileExtensionSettings } from '../api/extensions'
 import { FingerprintPanel } from '../components/FingerprintPanel'
 import { applyLocaleToFingerprintArgs, getSystemLanguage, getSystemTimezone } from '../utils/fingerprintSerializer'
 import { TagInput } from '../components/TagInput'
 import { GroupSelector } from '../components/GroupSelector'
 import { ProxyPickerModal } from '../components/ProxyPickerModal'
+import { ProfileExtensionPicker } from '../components/ProfileExtensionPicker'
 
 const fallbackLowLaunchArgs = ['--disable-sync', '--no-first-run']
 const directProxyID = '__direct__'
@@ -71,6 +73,9 @@ export function BrowserEditPage() {
   const [groups, setGroups] = useState<BrowserGroup[]>([])
   const [launchArgsText, setLaunchArgsText] = useState('')
   const [allTags, setAllTags] = useState<string[]>([])
+  const [extensions, setExtensions] = useState<BrowserExtension[]>([])
+  const [selectedExtensionIds, setSelectedExtensionIds] = useState<string[]>([])
+  const [extensionsLoading, setExtensionsLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [proxyPickerOpen, setProxyPickerOpen] = useState(false)
   const [proxyMode, setProxyMode] = useState<ProxySourceMode>('pool')
@@ -88,50 +93,62 @@ export function BrowserEditPage() {
   useEffect(() => {
     const loadData = async () => {
       setProxiesReady(false)
-      const [coreList, proxyList, tagList, groupList, settings] = await Promise.all([
-        fetchBrowserCores(),
-        fetchBrowserProxies(),
-        fetchAllTags(),
-        fetchGroups(),
-        fetchBrowserSettings(),
-      ])
-      const resolvedDefaultLaunchArgs = resolveDefaultLaunchArgs(settings.defaultLaunchArgs || [])
-      setCores(coreList)
-      setProxies(proxyList)
-      setAllTags(tagList)
-      setGroups(groupList)
+      setExtensionsLoading(true)
+      try {
+        const [coreList, proxyList, tagList, groupList, settings, extensionList] = await Promise.all([
+          fetchBrowserCores(),
+          fetchBrowserProxies(),
+          fetchAllTags(),
+          fetchGroups(),
+          fetchBrowserSettings(),
+          fetchBrowserExtensions(),
+        ])
+        const resolvedDefaultLaunchArgs = resolveDefaultLaunchArgs(settings.defaultLaunchArgs || [])
+        setCores(coreList)
+        setProxies(proxyList)
+        setAllTags(tagList)
+        setGroups(groupList)
+        setExtensions(extensionList)
 
-      if (isCreate) {
-        const resolved = resolvePoolProxySelection('', '', proxyList)
-        setProxyMode('pool')
-        setFormData((prev) => ({ ...prev, proxyId: resolved.proxyId || directProxyID, proxyConfig: '' }))
-        setLaunchArgsText(resolvedDefaultLaunchArgs.join('\n'))
+        if (isCreate) {
+          const resolved = resolvePoolProxySelection('', '', proxyList)
+          setProxyMode('pool')
+          setFormData((prev) => ({ ...prev, proxyId: resolved.proxyId || directProxyID, proxyConfig: '' }))
+          setLaunchArgsText(resolvedDefaultLaunchArgs.join('\n'))
+          setSelectedExtensionIds([])
+          setProxiesReady(true)
+          return
+        }
+        const list = await fetchBrowserProfiles()
+        const current = list.find(item => item.profileId === id)
+        if (!current) return
+        const extensionSettings = await fetchBrowserProfileExtensionSettings(current.profileId)
+        const currentLaunchArgs = normalizeLaunchArgs(current.launchArgs)
+        const normalizedCoreId = !current.coreId || current.coreId.toLowerCase() === 'default'
+          ? ''
+          : current.coreId
+        const resolvedProxy = resolvePoolProxySelection(current.proxyId || '', current.proxyConfig || '', proxyList)
+        setProxyMode(resolvedProxy.mode)
+        setFormData({
+          profileName: current.profileName,
+          userDataDir: current.userDataDir,
+          coreId: normalizedCoreId,
+          fingerprintArgs: current.fingerprintArgs,
+          proxyId: resolvedProxy.proxyId,
+          proxyConfig: resolvedProxy.proxyConfig,
+          launchArgs: currentLaunchArgs,
+          tags: current.tags,
+          keywords: current.keywords || [],
+          groupId: current.groupId || '',
+        })
+        setSelectedExtensionIds(extensionSettings.extensionIds)
+        setLaunchArgsText(currentLaunchArgs.join('\n'))
         setProxiesReady(true)
-        return
+      } catch (error: any) {
+        toast.error(error?.message || '加载配置失败')
+      } finally {
+        setExtensionsLoading(false)
       }
-      const list = await fetchBrowserProfiles()
-      const current = list.find(item => item.profileId === id)
-      if (!current) return
-      const currentLaunchArgs = normalizeLaunchArgs(current.launchArgs)
-      const normalizedCoreId = !current.coreId || current.coreId.toLowerCase() === 'default'
-        ? ''
-        : current.coreId
-      const resolvedProxy = resolvePoolProxySelection(current.proxyId || '', current.proxyConfig || '', proxyList)
-      setProxyMode(resolvedProxy.mode)
-      setFormData({
-        profileName: current.profileName,
-        userDataDir: current.userDataDir,
-        coreId: normalizedCoreId,
-        fingerprintArgs: current.fingerprintArgs,
-        proxyId: resolvedProxy.proxyId,
-        proxyConfig: resolvedProxy.proxyConfig,
-        launchArgs: currentLaunchArgs,
-        tags: current.tags,
-        keywords: current.keywords || [],
-        groupId: current.groupId || '',
-      })
-      setLaunchArgsText(currentLaunchArgs.join('\n'))
-      setProxiesReady(true)
     }
     loadData()
   }, [id, isCreate])
@@ -221,6 +238,11 @@ export function BrowserEditPage() {
     }
   }
 
+  const handleExtensionSelectionChange = (extensionIds: string[]) => {
+    setSelectedExtensionIds(extensionIds)
+    setIsDirty(true)
+  }
+
   const handleSave = async () => {
     const resolvedProxyId = proxyMode === 'pool' ? (formData.proxyId || '').trim() : ''
     const resolvedProxyConfig = proxyMode === 'local' ? (formData.proxyConfig || '').trim() : ''
@@ -248,10 +270,28 @@ export function BrowserEditPage() {
         return
       }
       if (isCreate) {
-        await createBrowserProfile(payload)
+        const created = await createBrowserProfile(payload)
+        const createdProfileId = created?.profileId || ''
+        if (!createdProfileId) {
+          throw new Error('配置已创建，但未返回实例 ID，无法保存扩展配置')
+        }
+        try {
+          await saveBrowserProfileExtensionSettings(createdProfileId, selectedExtensionIds, true)
+        } catch (error: any) {
+          toast.error(`配置已创建，但扩展配置保存失败：${error?.message || '保存失败'}`)
+          setIsDirty(false)
+          navigate(`/browser/edit/${createdProfileId}`)
+          return
+        }
         toast.success('配置已创建')
       } else if (id) {
         await updateBrowserProfile(id, payload)
+        try {
+          await saveBrowserProfileExtensionSettings(id, selectedExtensionIds, true)
+        } catch (error: any) {
+          setSaveError(`配置已更新，但扩展配置保存失败：${error?.message || '保存失败'}`)
+          return
+        }
         toast.success('配置已更新')
       }
       setIsDirty(false)
@@ -434,6 +474,20 @@ export function BrowserEditPage() {
         onProxyDeleted={handleProxyDeleted}
         onClose={() => setProxyPickerOpen(false)}
       />
+
+      <Card title="扩展配置" subtitle="选择此实例启动时加载的扩展">
+        {extensionsLoading ? (
+          <div className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-muted)] px-4 py-6 text-center text-sm text-[var(--color-text-muted)]">
+            正在加载插件...
+          </div>
+        ) : (
+          <ProfileExtensionPicker
+            extensions={extensions}
+            selectedIds={selectedExtensionIds}
+            onChange={handleExtensionSelectionChange}
+          />
+        )}
+      </Card>
 
       <Card title="指纹配置" subtitle="配置浏览器指纹参数">
         <FingerprintPanel
