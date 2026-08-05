@@ -12,7 +12,6 @@ import {
 } from './proxyPool/helpers'
 import {
   ProxyPoolEditModal,
-  ProxyPoolIPHealthDetailModal,
   ProxyPoolImportModal,
   ProxyPoolPreviewModal,
   type ProxyEditFormValue,
@@ -102,9 +101,6 @@ export function ProxyPoolPage() {
     ipHealthMap,
     checkingIPHealthIds,
     checkingAllIPHealth,
-    ipHealthDetailOpen,
-    setIPHealthDetailOpen,
-    currentIPHealthDetail,
     setLatencyMap,
     setLatencyEngineMap,
     setIPHealthMap,
@@ -112,7 +108,6 @@ export function ProxyPoolPage() {
     handleTestAll,
     handleCheckOneIPHealth,
     handleCheckAllIPHealth,
-    openIPHealthDetail,
   } = useProxyChecks({ proxies })
 
   const loadProxies = useCallback(async () => {
@@ -302,7 +297,6 @@ export function ProxyPoolPage() {
         onFilterProtocolChange={setFilterProtocol}
         onFilterAvailableOnlyChange={setFilterAvailableOnly}
         onOpenBatchDelete={() => setBatchDeleteConfirmOpen(true)}
-        onOpenIPHealthDetail={openIPHealthDetail}
         onSort={({ column, order }) => {
           setSortColumn(column)
           setSortOrder(order)
@@ -352,12 +346,6 @@ export function ProxyPoolPage() {
         onClose={() => setEditModalOpen(false)}
         onSave={handleSaveProxy}
         onChange={(patch) => setEditForm((prev) => ({ ...prev, ...patch }))}
-      />
-
-      <ProxyPoolIPHealthDetailModal
-        open={ipHealthDetailOpen}
-        detail={currentIPHealthDetail}
-        onClose={() => setIPHealthDetailOpen(false)}
       />
 
       <ProxyPoolCheckSettingsModal

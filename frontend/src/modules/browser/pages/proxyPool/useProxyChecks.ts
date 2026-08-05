@@ -24,8 +24,6 @@ export function useProxyChecks({ proxies }: UseProxyChecksOptions) {
   const [ipHealthMap, setIPHealthMap] = useState<Record<string, ProxyIPHealthResult>>({})
   const [checkingIPHealthIds, setCheckingIPHealthIds] = useState<Set<string>>(new Set())
   const [checkingAllIPHealth, setCheckingAllIPHealth] = useState(false)
-  const [ipHealthDetailOpen, setIPHealthDetailOpen] = useState(false)
-  const [currentIPHealthDetail, setCurrentIPHealthDetail] = useState<ProxyIPHealthResult | null>(null)
 
   useEffect(() => {
     setLatencyMap(readLatencyCache())
@@ -222,13 +220,6 @@ export function useProxyChecks({ proxies }: UseProxyChecksOptions) {
     }
   }
 
-  const openIPHealthDetail = (proxyId: string) => {
-    const result = ipHealthMap[proxyId]
-    if (!result) return
-    setCurrentIPHealthDetail(result)
-    setIPHealthDetailOpen(true)
-  }
-
   return {
     latencyMap,
     latencyEngineMap,
@@ -237,9 +228,6 @@ export function useProxyChecks({ proxies }: UseProxyChecksOptions) {
     ipHealthMap,
     checkingIPHealthIds,
     checkingAllIPHealth,
-    ipHealthDetailOpen,
-    setIPHealthDetailOpen,
-    currentIPHealthDetail,
     setLatencyMap,
     setLatencyEngineMap,
     setIPHealthMap,
@@ -247,6 +235,5 @@ export function useProxyChecks({ proxies }: UseProxyChecksOptions) {
     handleTestAll,
     handleCheckOneIPHealth,
     handleCheckAllIPHealth,
-    openIPHealthDetail,
   }
 }

@@ -59,7 +59,7 @@ function NotificationDropdown({
         </div>
       </div>
 
-      <div className="max-h-80 overflow-y-auto">
+      <div className="max-h-[min(70vh,36rem)] overflow-y-auto">
         {notifications.length === 0 ? (
           <div className="py-8 text-center text-[var(--color-text-muted)]">
             <Bell className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -82,7 +82,7 @@ function NotificationDropdown({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2">
                     <p className={clsx(
-                      'text-sm truncate',
+                      'text-sm break-words',
                       notification.read ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-primary)] font-medium'
                     )}>
                       {notification.title}
@@ -91,7 +91,7 @@ function NotificationDropdown({
                       <span className="w-2 h-2 rounded-full bg-[var(--color-accent)] shrink-0 mt-1.5" />
                     )}
                   </div>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5 line-clamp-2">
+                  <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-[var(--color-text-muted)]">
                     {notification.message}
                   </p>
                   <p className="text-[10px] text-[var(--color-text-muted)] mt-1">

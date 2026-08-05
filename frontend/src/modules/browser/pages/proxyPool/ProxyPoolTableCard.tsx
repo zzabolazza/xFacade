@@ -1,7 +1,9 @@
 import { useMemo } from 'react'
+import { HelpCircle } from 'lucide-react'
 
 import { Button, Card, Input, Table } from '../../../../shared/components'
 import type { SortOrder, TableColumn } from '../../../../shared/components/Table'
+import { BrowserOpenURL } from '../../../../wailsjs/runtime/runtime'
 import type { ProxyIPHealthResult } from '../../types'
 
 import { BUILTIN_PROXY_IDS, type ProxyDisplayInfo } from './helpers'
@@ -32,7 +34,6 @@ interface ProxyPoolTableCardProps {
   onFilterProtocolChange: (nextValue: string) => void
   onFilterAvailableOnlyChange: (checked: boolean) => void
   onOpenBatchDelete: () => void
-  onOpenIPHealthDetail: (proxyId: string) => void
   onSort: (next: { column: string; order: SortOrder }) => void
   onTestOne: (record: ProxyDisplayInfo) => void
   onToggleAll: () => void
@@ -68,7 +69,6 @@ export function ProxyPoolTableCard({
   onFilterProtocolChange,
   onFilterAvailableOnlyChange,
   onOpenBatchDelete,
-  onOpenIPHealthDetail,
   onSort,
   onTestOne,
   onToggleAll,
@@ -117,26 +117,41 @@ export function ProxyPoolTableCard({
     const result = ipHealthMap[record.proxyId]
     if (!result) return <span className="text-[var(--color-text-muted)] text-xs">-</span>
     if (!result.ok) {
-      return (
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-red-500 truncate max-w-[120px]" title={result.error || '检测失败'}>失败</span>
-          <Button size="sm" variant="ghost" onClick={(event) => { event.stopPropagation(); onOpenIPHealthDetail(record.proxyId) }}>原始</Button>
-        </div>
-      )
+      return <span className="text-xs text-red-500 truncate max-w-[120px]" title={result.error || '检测失败'}>失败</span>
     }
 
-    const location = [result.country, result.region, result.city].filter(Boolean).join(' / ')
+    const score = Number.isFinite(result.fraudScore) ? result.fraudScore : 0
+    const scoreColor = score >= 70 ? 'text-red-500' : score >= 40 ? 'text-yellow-500' : 'text-green-500'
+    const ippureURL = result.ip ? `https://ippure.com/?ip=${encodeURIComponent(result.ip)}` : ''
     return (
-      <div className="flex items-center gap-2 min-w-0">
-        <div className="min-w-0">
-          <div className="text-xs text-[var(--color-text-primary)] truncate">{result.ip || '-'}</div>
-          <div className="text-[11px] text-[var(--color-text-muted)] truncate">
-            {`fraud ${result.fraudScore} | ${result.isResidential ? '住宅' : '机房'}${location ? ` | ${location}` : ''}`}
-          </div>
-        </div>
-        <Button size="sm" variant="ghost" onClick={(event) => { event.stopPropagation(); onOpenIPHealthDetail(record.proxyId) }}>原始</Button>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span className={`text-xs font-medium ${scoreColor}`} title={`IP风险度：${score}`}>
+          {score}
+        </span>
+        {ippureURL && (
+          <Button
+            size="icon"
+            variant="ghost"
+            title="在 IPPure 中查看此 IP"
+            aria-label="在 IPPure 中查看此 IP"
+            onClick={(event) => {
+              event.stopPropagation()
+              void BrowserOpenURL(ippureURL)
+            }}
+          >
+            <HelpCircle className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     )
+  }
+
+  const renderIP = (record: ProxyDisplayInfo) => {
+    if (checkingIPHealthIds.has(record.proxyId)) {
+      return <span className="text-[var(--color-text-muted)] text-xs animate-pulse">检测中...</span>
+    }
+    const result = ipHealthMap[record.proxyId]
+    return <span className="text-xs text-[var(--color-text-primary)] whitespace-nowrap">{result?.ip || '-'}</span>
   }
 
   const renderCountry = (record: ProxyDisplayInfo) => {
@@ -179,12 +194,6 @@ export function ProxyPoolTableCard({
     },
     { key: 'type', title: '类型', width: '90px', sortable: true },
     { key: 'server', title: '服务器', width: '180px', sortable: true },
-    {
-      key: 'country',
-      title: '国家/地区',
-      width: '100px',
-      render: (_, record) => renderCountry(record),
-    },
     { key: 'port', title: '端口', width: '80px', sortable: true, render: (value) => value || '-' },
     {
       key: 'latency',
@@ -200,14 +209,21 @@ export function ProxyPoolTableCard({
       render: (_, record) => renderLatencyEngine(record),
     },
     {
+      key: 'country',
+      title: '国家/地区',
+      width: '110px',
+      render: (_, record) => renderCountry(record),
+    },
+    {
+      key: 'ip',
+      title: 'IP',
+      width: '140px',
+      render: (_, record) => renderIP(record),
+    },
+    {
       key: 'ipHealth',
-      title: (
-        <div className="leading-tight">
-          <div>IP健康</div>
-          <div className="mt-0.5 text-[10px] font-normal text-[var(--color-text-muted)]">仅供参考</div>
-        </div>
-      ),
-      width: '280px',
+      title: 'IP风险度',
+      width: '170px',
       render: (_, record) => renderIPHealth(record),
     },
     {
@@ -232,7 +248,7 @@ export function ProxyPoolTableCard({
               onClick={(event) => { event.stopPropagation(); onCheckOneIPHealth(record) }}
               loading={checkingIPHealthIds.has(record.proxyId)}
             >
-              IP健康
+              IP检测
             </Button>
             <Button
               size="sm"
@@ -268,7 +284,6 @@ export function ProxyPoolTableCard({
     onCheckOneIPHealth,
     onDelete,
     onEdit,
-    onOpenIPHealthDetail,
     onTestOne,
     onToggleOne,
     selectedIds,
