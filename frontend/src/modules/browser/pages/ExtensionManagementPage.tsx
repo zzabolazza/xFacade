@@ -363,7 +363,6 @@ export function ExtensionManagementPage() {
       <ExtensionProfileLimitModal
         open={!!limitExtension}
         extension={limitExtension}
-        allExtensions={items}
         onClose={() => setLimitExtension(null)}
       />
 

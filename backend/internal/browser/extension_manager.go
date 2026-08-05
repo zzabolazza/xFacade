@@ -308,8 +308,8 @@ func (m *Manager) EnabledExtensionDirsForProfile(profileID string) []string {
 		return nil
 	}
 	settings, err := m.ExtensionDAO.GetProfileSettings(profileID)
-	if err != nil || !settings.Configured {
-		return m.EnabledExtensionDirs()
+	if err != nil {
+		return nil
 	}
 	items, err := m.ExtensionDAO.ListByIDs(settings.ExtensionIDs)
 	if err != nil {

@@ -47,7 +47,7 @@ func (d *SQLiteExtensionDAO) ListByIDs(extensionIDs []string) ([]Extension, erro
 		placeholders = append(placeholders, "?")
 		args = append(args, id)
 	}
-	return d.listWhere("WHERE enabled = 1 AND extension_id IN ("+strings.Join(placeholders, ",")+")", args)
+	return d.listWhere("WHERE extension_id IN ("+strings.Join(placeholders, ",")+")", args)
 }
 
 func (d *SQLiteExtensionDAO) Get(extensionID string) (Extension, error) {

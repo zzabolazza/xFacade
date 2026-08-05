@@ -13,11 +13,10 @@ const UNGROUPED_PROFILE_GROUP_ID = '__ungrouped__'
 export interface ExtensionProfileLimitModalProps {
   open: boolean
   extension: BrowserExtension | null
-  allExtensions: BrowserExtension[]
   onClose: () => void
 }
 
-export function ExtensionProfileLimitModal({ open, extension, allExtensions, onClose }: ExtensionProfileLimitModalProps) {
+export function ExtensionProfileLimitModal({ open, extension, onClose }: ExtensionProfileLimitModalProps) {
   const [profiles, setProfiles] = useState<BrowserProfile[]>([])
   const [groups, setGroups] = useState<BrowserGroupWithCount[]>([])
   const [settingsByProfile, setSettingsByProfile] = useState<Record<string, BrowserProfileExtensionSettings>>({})
@@ -26,10 +25,6 @@ export function ExtensionProfileLimitModal({ open, extension, allExtensions, onC
   const [saving, setSaving] = useState(false)
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
-  const enabledExtensionIds = useMemo(
-    () => allExtensions.filter((item) => item.enabled).map((item) => item.extensionId),
-    [allExtensions],
-  )
   const groupNameMap = useMemo(() => {
     const map = new Map<string, string>()
     groups.forEach((group) => map.set(group.groupId, group.groupName))
@@ -93,7 +88,7 @@ export function ExtensionProfileLimitModal({ open, extension, allExtensions, onC
       setSelectedIds(profileItems
         .filter((profile) => {
           const settings = settingsMap[profile.profileId]
-          return settings?.configured ? settings.extensionIds.includes(extension.extensionId) : extension.enabled
+          return settings?.extensionIds.includes(extension.extensionId)
         })
         .map((profile) => profile.profileId))
     }).catch((error: any) => {
@@ -126,13 +121,12 @@ export function ExtensionProfileLimitModal({ open, extension, allExtensions, onC
       const selected = new Set(selectedIds)
       const saveTasks = profiles.map((profile) => {
         const current = settingsByProfile[profile.profileId]
-        const baseIds = current?.configured ? current.extensionIds : enabledExtensionIds
+        const baseIds = current?.extensionIds || []
         const nextIds = selected.has(profile.profileId)
           ? Array.from(new Set([...baseIds, extension.extensionId]))
           : baseIds.filter((extensionId) => extensionId !== extension.extensionId)
 
-        if (!current?.configured && sameStringSet(baseIds, nextIds)) return null
-        if (current?.configured && sameStringSet(current.extensionIds, nextIds)) return null
+        if (sameStringSet(baseIds, nextIds)) return null
         return saveBrowserProfileExtensionSettings(profile.profileId, nextIds, true)
       }).filter((task): task is Promise<BrowserProfileExtensionSettings> => task !== null)
 
@@ -196,7 +190,6 @@ export function ExtensionProfileLimitModal({ open, extension, allExtensions, onC
                           <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-[var(--color-text-primary)]">
                             <span>{profile.profileName || profile.profileId}</span>
                             {profile.running ? <span className="rounded bg-green-50 px-1.5 py-0.5 text-xs text-green-700">运行中</span> : null}
-                            {settingsByProfile[profile.profileId]?.configured ? <span className="rounded bg-[var(--color-bg-muted)] px-1.5 py-0.5 text-xs font-normal text-[var(--color-text-muted)]">已单独配置</span> : null}
                           </div>
                           <div className="mt-1 break-all font-mono text-xs text-[var(--color-text-muted)]">{profile.profileId}</div>
                         </div>

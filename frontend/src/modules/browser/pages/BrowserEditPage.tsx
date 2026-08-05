@@ -115,7 +115,7 @@ export function BrowserEditPage() {
           setProxyMode('pool')
           setFormData((prev) => ({ ...prev, proxyId: resolved.proxyId || directProxyID, proxyConfig: '' }))
           setLaunchArgsText(resolvedDefaultLaunchArgs.join('\n'))
-          setSelectedExtensionIds([])
+          setSelectedExtensionIds(extensionList.map((extension) => extension.extensionId).filter(Boolean))
           setProxiesReady(true)
           return
         }
