@@ -1,4 +1,4 @@
-import type { BrowserProfile, BrowserTab } from '../types'
+import type { BrowserProfile, BrowserTab, BrowserWindowTileRequest, BrowserWindowTilingResult } from '../types'
 import { getBindings, getMockProfiles, nowISOString, setMockProfiles } from './runtime'
 
 export interface StartBrowserInstanceOptions {
@@ -145,6 +145,17 @@ export async function setBrowserInstanceWindowBounds(
     return (await bindings.BrowserInstanceSetWindowBounds(profileId, bounds)) || null
   }
   return getMockProfiles().find((item) => item.profileId === profileId) || null
+}
+
+export async function setBrowserInstancesWindowBounds(
+  tiles: BrowserWindowTileRequest[],
+  alignViewport = true,
+): Promise<BrowserWindowTilingResult[] | null> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserInstancesSetWindowBounds) {
+    return (await bindings.BrowserInstancesSetWindowBounds({ tiles, alignViewport })) || []
+  }
+  return null
 }
 
 export async function openBrowserUrl(profileId: string, targetUrl: string): Promise<boolean> {

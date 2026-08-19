@@ -1,12 +1,12 @@
 package backend
 
 import (
+	"context"
 	"facade/backend/internal/browser"
 	"facade/backend/internal/config"
 	"facade/backend/internal/database"
 	"facade/backend/internal/launchcode"
 	"facade/backend/internal/logger"
-	"context"
 	"strings"
 	"sync"
 )
@@ -27,6 +27,7 @@ type App struct {
 	browserMgr     *browser.Manager
 	launchCodeSvc  *launchcode.LaunchCodeService
 	launchServer   *launchcode.LaunchServer
+	inputSync      *inputSyncManager
 	speedScheduler *browser.ProxySpeedScheduler
 	appRoot        string
 	version        string
@@ -46,11 +47,13 @@ func NewApp(appRoot string, appVersion ...string) *App {
 	if len(appVersion) > 0 {
 		version = strings.TrimSpace(appVersion[0])
 	}
-	return &App{
+	app := &App{
 		appRoot:              strings.TrimSpace(appRoot),
 		version:              version,
 		deferredStartTargets: make(map[string][]string),
 	}
+	app.inputSync = newInputSyncManager(app)
+	return app
 }
 
 func (a *App) appName() string {

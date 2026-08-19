@@ -13,6 +13,15 @@ interface ScreenBounds {
   height: number
 }
 
+interface TilingGrid {
+  columns: number
+  rows: number
+  tileWidth: number
+  tileHeight: number
+  originX: number
+  originY: number
+}
+
 function toFiniteNumber(value: unknown, fallback: number): number {
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : fallback
@@ -37,32 +46,50 @@ function resolveAvailableScreenBounds(): ScreenBounds {
 }
 
 export function buildBrowserWindowTiles(count: number): BrowserWindowTile[] {
+  return buildBrowserWindowTilesForBounds(count, resolveAvailableScreenBounds())
+}
+
+export function buildBrowserWindowTilesForBounds(count: number, bounds: ScreenBounds): BrowserWindowTile[] {
   const total = Math.max(0, Math.floor(count))
   if (total === 0) return []
 
-  const bounds = resolveAvailableScreenBounds()
-  const columns = Math.ceil(Math.sqrt(total))
-  const rows = Math.ceil(total / columns)
-  const cellWidth = Math.max(1, Math.floor(bounds.width / columns))
-  const cellHeight = Math.max(1, Math.floor(bounds.height / rows))
+  const grid = buildTilingGrid(total, bounds)
 
   return Array.from({ length: total }, (_, index) => {
-    const column = index % columns
-    const row = Math.floor(index / columns)
-    const x = bounds.left + column * cellWidth
-    const y = bounds.top + row * cellHeight
-    const width = column === columns - 1 ? Math.max(1, bounds.width - cellWidth * column) : cellWidth
-    const height = row === rows - 1 ? Math.max(1, bounds.height - cellHeight * row) : cellHeight
+    const row = Math.floor(index / grid.columns)
+    const column = index - row * grid.columns
+    const rowCount = Math.min(grid.columns, total - row * grid.columns)
+    const rowOffset = Math.floor(((grid.columns - rowCount) * grid.tileWidth) / 2)
+    const x = grid.originX + rowOffset + column * grid.tileWidth
+    const y = grid.originY + row * grid.tileHeight
 
     return {
       x,
       y,
-      width,
-      height,
+      width: grid.tileWidth,
+      height: grid.tileHeight,
       launchArgs: [
         `--window-position=${x},${y}`,
-        `--window-size=${width},${height}`,
+        `--window-size=${grid.tileWidth},${grid.tileHeight}`,
       ],
     }
   })
+}
+
+function buildTilingGrid(total: number, bounds: ScreenBounds): TilingGrid {
+  const columns = Math.ceil(Math.sqrt(total))
+  const rows = Math.ceil(total / columns)
+  const tileWidth = Math.max(1, Math.floor(bounds.width / columns))
+  const tileHeight = Math.max(1, Math.floor(bounds.height / rows))
+  const usedWidth = tileWidth * columns
+  const usedHeight = tileHeight * rows
+
+  return {
+    columns,
+    rows,
+    tileWidth,
+    tileHeight,
+    originX: bounds.left + Math.floor((bounds.width - usedWidth) / 2),
+    originY: bounds.top + Math.floor((bounds.height - usedHeight) / 2),
+  }
 }

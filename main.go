@@ -85,6 +85,26 @@ func (a *App) BrowserInstanceSetWindowBounds(profileId string, bounds backend.Br
 	return a.App.BrowserInstanceSetWindowBounds(profileId, bounds)
 }
 
+func (a *App) BrowserInstancesSetWindowBounds(req backend.BrowserWindowTilingRequest) ([]backend.BrowserWindowTilingResult, error) {
+	return a.App.BrowserInstancesSetWindowBounds(req)
+}
+
+func (a *App) BrowserInputSyncStart(req backend.BrowserInputSyncStartRequest) (*backend.BrowserInputSyncStatus, error) {
+	return a.App.BrowserInputSyncStart(req)
+}
+
+func (a *App) BrowserInputSyncStop() (*backend.BrowserInputSyncStatus, error) {
+	return a.App.BrowserInputSyncStop()
+}
+
+func (a *App) BrowserInputSyncStatus() *backend.BrowserInputSyncStatus {
+	return a.App.BrowserInputSyncStatus()
+}
+
+func (a *App) BrowserInputSyncRunSpecialMode() (*backend.BrowserInputSyncStatus, error) {
+	return a.App.BrowserInputSyncRunSpecialMode()
+}
+
 func (a *App) startup(ctx context.Context) {
 	backend.Start(a.App, ctx)
 }

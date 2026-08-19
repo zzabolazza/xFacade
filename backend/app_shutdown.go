@@ -1,8 +1,8 @@
 package backend
 
 import (
-	"facade/backend/internal/logger"
 	"context"
+	"facade/backend/internal/logger"
 	"os/exec"
 	goruntime "runtime"
 	"strings"
@@ -80,6 +80,9 @@ func ShouldBlockClose(a *App, ctx context.Context) bool {
 
 func (a *App) stopRuntimeServices() {
 	a.stopServicesOnce.Do(func() {
+		if a.inputSync != nil {
+			_, _ = a.inputSync.Stop()
+		}
 		if a.speedScheduler != nil {
 			a.speedScheduler.Stop()
 			a.speedScheduler = nil

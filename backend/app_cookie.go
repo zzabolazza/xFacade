@@ -38,6 +38,8 @@ type cdpTarget struct {
 	Id                   string `json:"id"`
 	WebSocketDebuggerUrl string `json:"webSocketDebuggerUrl"`
 	Type                 string `json:"type"`
+	Title                string `json:"title"`
+	Url                  string `json:"url"`
 }
 
 type cdpBrowserVersion struct {

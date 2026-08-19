@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Archive, ChevronDown, ChevronUp, Copy, Download, LayoutGrid, Pencil, Play, RefreshCw, Square, Trash2 } from 'lucide-react'
+import { Archive, ChevronDown, ChevronUp, Copy, Download, Keyboard, LayoutGrid, MousePointer2, Pencil, Play, RefreshCw, Square, Trash2 } from 'lucide-react'
 
 import { Button, toast } from '../../../shared/components'
 import { regenerateBrowserProfileCode, setBrowserProfileCode } from '../api'
@@ -12,6 +12,9 @@ interface BatchToolbarProps {
   onDeselectAll: () => void
   onBatchStart: () => void
   onRetileRunning: () => void
+  onStartInputSync: () => void
+  onStopInputSync: () => void
+  onRunSpecialInputSync: () => void
   onBatchStop: () => void
   onBatchExport: () => void
   onOpenBackup: () => void
@@ -20,6 +23,8 @@ interface BatchToolbarProps {
   batchStarting: boolean
   batchStopping: boolean
   retileLoading: boolean
+  inputSyncRunning: boolean
+  inputSyncLoading: boolean
   exporting?: boolean
 }
 
@@ -31,6 +36,9 @@ export function BatchToolbar({
   onDeselectAll,
   onBatchStart,
   onRetileRunning,
+  onStartInputSync,
+  onStopInputSync,
+  onRunSpecialInputSync,
   onBatchStop,
   onBatchExport,
   onOpenBackup,
@@ -39,6 +47,8 @@ export function BatchToolbar({
   batchStarting,
   batchStopping,
   retileLoading,
+  inputSyncRunning,
+  inputSyncLoading,
   exporting = false,
 }: BatchToolbarProps) {
   if (selectedCount === 0) return null
@@ -61,6 +71,25 @@ export function BatchToolbar({
           title={selectedRunningCount > 0 ? '平铺已选运行实例' : '没有已选运行实例'}
         >
           <LayoutGrid className="w-3.5 h-3.5" />平铺
+        </Button>
+        <Button
+          size="sm"
+          variant={inputSyncRunning ? 'success' : 'secondary'}
+          onClick={inputSyncRunning ? onStopInputSync : onStartInputSync}
+          loading={inputSyncLoading}
+          disabled={inputSyncRunning ? inputSyncLoading : selectedRunningCount < 2 || batchBusy}
+          title={inputSyncRunning ? '停止网页输入同步' : selectedRunningCount >= 2 ? '以第一个已选运行实例为主控，开启网页输入同步' : '至少选择 2 个运行实例'}
+        >
+          <MousePointer2 className="w-3.5 h-3.5" />{inputSyncRunning ? '停同步' : '同步'}
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={onRunSpecialInputSync}
+          disabled={!inputSyncRunning || inputSyncLoading}
+          title={inputSyncRunning ? '进入窗口级同步提示' : '请先开启网页输入同步'}
+        >
+          <Keyboard className="w-3.5 h-3.5" />窗口级
         </Button>
         <Button size="sm" variant="secondary" onClick={onBatchStop} loading={batchStopping} disabled={batchBusy && !batchStopping} title="批量停止">
           <Square className="w-3.5 h-3.5" />停止

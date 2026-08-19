@@ -73,6 +73,64 @@ export interface BrowserTab {
   active: boolean
 }
 
+export interface BrowserInputSyncTargetStatus {
+  profileId: string
+  profileName: string
+  debugPort: number
+  ready: boolean
+  warning?: string
+}
+
+export interface BrowserInputSyncStatus {
+  running: boolean
+  sessionId?: string
+  mode?: string
+  masterProfileId?: string
+  masterName?: string
+  targetProfileIds: string[]
+  startedAt?: string
+  lastEventAt?: string
+  eventCount: number
+  targets: BrowserInputSyncTargetStatus[]
+  warning?: string
+}
+
+export interface BrowserWindowBounds {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+export interface BrowserWindowTileRequest {
+  profileId: string
+  bounds: BrowserWindowBounds
+}
+
+export interface BrowserWindowTilingRequest {
+  tiles: BrowserWindowTileRequest[]
+  alignViewport: boolean
+}
+
+export interface BrowserWindowViewportSize {
+  width: number
+  height: number
+}
+
+export interface BrowserWindowTilingResult {
+  profileId: string
+  profileName: string
+  requested: BrowserWindowBounds
+  applied: BrowserWindowBounds
+  actual: BrowserWindowBounds
+  visualViewport: BrowserWindowViewportSize
+  layoutViewport: BrowserWindowViewportSize
+  chromeWidth: number
+  chromeHeight: number
+  ready: boolean
+  warning?: string
+}
+
 export interface BrowserSettings {
   userDataRoot: string
   defaultFingerprintArgs: string[]

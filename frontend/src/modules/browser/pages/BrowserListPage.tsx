@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import { toast } from '../../../shared/components'
 import { flushThemeForBackup } from '../../../shared/theme/theme'
-import type { BrowserProfile, BrowserProfileCopyOptions, BrowserProxy } from '../types'
+import type { BrowserInputSyncStatus, BrowserProfile, BrowserProfileCopyOptions, BrowserProxy } from '../types'
 import { BrowserListHeader } from '../components/BrowserListLayout'
 import { BatchToolbar } from '../components/BrowserListWidgets'
 import { BrowserProfilesPanel } from '../components/BrowserProfilesPanel'
@@ -21,6 +22,7 @@ import {
   deleteBrowserProfile,
   exportBrowserProfilePackage,
   importBrowserProfilePackage,
+  setBrowserInstancesWindowBounds,
   setBrowserInstanceWindowBounds,
   startBrowserInstanceWithParams,
   stopBrowserInstance,
@@ -28,6 +30,10 @@ import {
   exportFullBrowserBackup,
   importFullBrowserBackup,
   pickFullBrowserBackupFile,
+  fetchBrowserInputSyncStatus,
+  runBrowserInputSyncSpecialMode,
+  startBrowserInputSync,
+  stopBrowserInputSync,
 } from '../api'
 
 type BackupLoadingMode = 'none' | 'export' | 'import-merge' | 'import-reset'
@@ -48,6 +54,8 @@ export function BrowserListPage() {
   const batchStarting = batchOperation === 'start'
   const batchStopping = batchOperation === 'stop'
   const [retileLoading, setRetileLoading] = useState(false)
+  const [inputSyncStatus, setInputSyncStatus] = useState<BrowserInputSyncStatus | null>(null)
+  const [inputSyncLoading, setInputSyncLoading] = useState(false)
   const [profilePackageBusy, setProfilePackageBusy] = useState(false)
   const [backupModalOpen, setBackupModalOpen] = useState(false)
   const [backupLoadingMode, setBackupLoadingMode] = useState<BackupLoadingMode>('none')
@@ -130,6 +138,24 @@ export function BrowserListPage() {
     mergeProfileState,
     loadProfiles,
   })
+
+  useEffect(() => {
+    let cancelled = false
+    fetchBrowserInputSyncStatus()
+      .then((status) => {
+        if (!cancelled) setInputSyncStatus(status)
+      })
+      .catch(() => {
+        if (!cancelled) setInputSyncStatus(null)
+      })
+    const off = EventsOn('browser:input-sync:status', (status: BrowserInputSyncStatus) => {
+      setInputSyncStatus(status)
+    })
+    return () => {
+      cancelled = true
+      off()
+    }
+  }, [])
   // 批量操作
   const toggleSelect = (profileId: string) => {
     setSelectedIds(prev => {
@@ -217,17 +243,55 @@ export function BrowserListPage() {
     setRetileLoading(true)
     let success = 0, failed = 0
     const failureMessages: string[] = []
+    const tileRequests = runningTargets.map((profile, index) => {
+      const tile = tiles[index]
+      return {
+        profileId: profile.profileId,
+        bounds: {
+          left: tile?.x || 0,
+          top: tile?.y || 0,
+          width: tile?.width || 1,
+          height: tile?.height || 1,
+        },
+      }
+    })
+
+    try {
+      const batchResults = await setBrowserInstancesWindowBounds(tileRequests, true)
+      if (batchResults) {
+        batchResults.forEach((result) => {
+          if (result.ready && !result.warning) {
+            success++
+          } else {
+            failed++
+            failureMessages.push(`${result.profileName || result.profileId}：${result.warning || '平铺后未能读取实际窗口/视口'}`)
+          }
+        })
+        setRetileLoading(false)
+        if (success > 0) {
+          toast.success(`平铺完成：成功 ${success}${failed > 0 ? `，失败 ${failed}` : ''}`)
+        } else {
+          toast.error(`平铺失败：失败 ${failed}`)
+        }
+        if (failureMessages.length > 0) {
+          const preview = failureMessages.slice(0, 3)
+          const more = failureMessages.length > preview.length ? `\n另有 ${failureMessages.length - preview.length} 个实例平铺失败。` : ''
+          toast.error(`以下实例平铺失败：\n${preview.join('\n')}${more}`)
+        }
+        await loadProfiles({ silent: true, syncRuntimeState: true })
+        return
+      }
+    } catch (error: any) {
+      const feedback = resolveActionFeedback(error, '平铺失败')
+      failureMessages.push(feedback.message)
+    }
+
     for (let index = 0; index < runningTargets.length; index += 1) {
       const profile = runningTargets[index]
-      const tile = tiles[index]
-      if (!tile) continue
+      const request = tileRequests[index]
+      if (!request) continue
       try {
-        const updatedProfile = await setBrowserInstanceWindowBounds(profile.profileId, {
-          left: tile.x,
-          top: tile.y,
-          width: tile.width,
-          height: tile.height,
-        })
+        const updatedProfile = await setBrowserInstanceWindowBounds(profile.profileId, request.bounds)
         mergeProfileState(updatedProfile)
         success++
       } catch (error: any) {
@@ -248,6 +312,64 @@ export function BrowserListPage() {
       toast.error(`以下实例平铺失败：\n${preview.join('\n')}${more}`)
     }
     await loadProfiles({ silent: true, syncRuntimeState: true })
+  }
+
+  const handleStartInputSync = async () => {
+    const runningTargets = profiles.filter(profile => selectedIds.has(profile.profileId) && profile.running)
+    if (runningTargets.length < 2) {
+      toast.warning('请至少选择 2 个运行中的实例')
+      return
+    }
+    const [master, ...targets] = runningTargets
+    setInputSyncLoading(true)
+    try {
+      const status = await startBrowserInputSync({
+        masterProfileId: master.profileId,
+        targetProfileIds: targets.map(profile => profile.profileId),
+        mode: 'page',
+      })
+      setInputSyncStatus(status)
+      const readyCount = status.targets.filter(target => target.ready).length
+      toast.success(`输入同步已开启：主控 ${master.profileName}，目标 ${readyCount} 个`)
+      const warnings = status.targets.filter(target => target.warning)
+      if (warnings.length > 0) {
+        const preview = warnings.slice(0, 3).map(target => `${target.profileName || target.profileId}：${target.warning}`)
+        const more = warnings.length > preview.length ? `\n另有 ${warnings.length - preview.length} 个目标不可用。` : ''
+        toast.warning(`部分目标未加入同步：\n${preview.join('\n')}${more}`)
+      }
+    } catch (error: any) {
+      toast.error(error?.message || '输入同步启动失败')
+    } finally {
+      setInputSyncLoading(false)
+    }
+  }
+
+  const handleStopInputSync = async () => {
+    setInputSyncLoading(true)
+    try {
+      const status = await stopBrowserInputSync()
+      setInputSyncStatus(status)
+      toast.success('输入同步已停止')
+    } catch (error: any) {
+      toast.error(error?.message || '输入同步停止失败')
+    } finally {
+      setInputSyncLoading(false)
+    }
+  }
+
+  const handleRunSpecialInputSync = async () => {
+    const confirmed = window.confirm('窗口级同步会短暂切换窗口或移动鼠标，完成后再恢复主控窗口。是否继续？')
+    if (!confirmed) return
+    setInputSyncLoading(true)
+    try {
+      const status = await runBrowserInputSyncSpecialMode()
+      setInputSyncStatus(status)
+      toast.success('窗口级同步已完成')
+    } catch (error: any) {
+      toast.warning(error?.message || '窗口级同步暂不可用')
+    } finally {
+      setInputSyncLoading(false)
+    }
   }
 
   const handleBatchStop = async () => {
@@ -471,6 +593,8 @@ export function BrowserListPage() {
 
   const proxyErrorCount = proxies.filter(proxy => proxy.lastTestedAt && proxy.lastTestOk === false).length
   const selectedRunningCount = profiles.filter(profile => selectedIds.has(profile.profileId) && profile.running).length
+  const inputSyncRunning = inputSyncStatus?.running === true
+  const inputSyncReadyTargets = inputSyncStatus?.targets?.filter(target => target.ready).length || 0
 
   return (
     <div className="h-full overflow-auto pb-5 animate-fade-in">
@@ -502,6 +626,9 @@ export function BrowserListPage() {
           onDeselectAll={handleDeselectAll}
           onBatchStart={handleBatchStart}
           onRetileRunning={handleRetileRunning}
+          onStartInputSync={() => { void handleStartInputSync() }}
+          onStopInputSync={() => { void handleStopInputSync() }}
+          onRunSpecialInputSync={() => { void handleRunSpecialInputSync() }}
           onBatchStop={handleBatchStop}
           onBatchExport={handleBatchExport}
           onOpenBackup={() => setBackupModalOpen(true)}
@@ -510,8 +637,20 @@ export function BrowserListPage() {
           batchStarting={batchStarting}
           batchStopping={batchStopping}
           retileLoading={retileLoading}
+          inputSyncRunning={inputSyncRunning}
+          inputSyncLoading={inputSyncLoading}
           exporting={profilePackageBusy}
         />
+
+        {inputSyncRunning && (
+          <div className="flex flex-wrap items-center gap-2 border border-[var(--color-border-muted)] bg-[var(--color-bg-subtle)] px-3 py-2 text-xs text-[var(--color-text-secondary)]">
+            <span className="font-semibold text-[var(--color-text-primary)]">输入同步运行中</span>
+            <span>主控：{inputSyncStatus?.masterName || inputSyncStatus?.masterProfileId}</span>
+            <span>目标：{inputSyncReadyTargets}</span>
+            <span>事件：{inputSyncStatus?.eventCount || 0}</span>
+            {inputSyncStatus?.lastEventAt && <span>最近：{new Date(inputSyncStatus.lastEventAt).toLocaleTimeString()}</span>}
+          </div>
+        )}
 
       <BrowserBackupModal
         open={backupModalOpen}
