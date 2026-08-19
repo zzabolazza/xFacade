@@ -38,8 +38,12 @@ func TestSwaggerRoutesServeUIAndSpec(t *testing.T) {
 	if spec.Code != http.StatusOK {
 		t.Fatalf("GET /swagger/openapi.yaml status = %d, want %d", spec.Code, http.StatusOK)
 	}
-	if !strings.Contains(spec.Body.String(), "openapi:") {
+	specBody := spec.Body.String()
+	if !strings.Contains(specBody, "openapi:") {
 		t.Fatalf("openapi.yaml missing openapi marker")
+	}
+	if strings.Contains(specBody, "\t") {
+		t.Fatalf("openapi.yaml must not contain tab characters")
 	}
 
 	bundle := httptest.NewRecorder()

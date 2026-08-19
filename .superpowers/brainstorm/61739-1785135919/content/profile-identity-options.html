@@ -1,0 +1,101 @@
+<h2>Chromium Profile Identification</h2>
+<p class="subtitle">Goal: make each running profile recognizable both in the window itself and at the system icon level.</p>
+
+<div class="cards">
+  <div class="card" data-choice="option-a" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <div class="label">Recommended</div>
+      <h3>A. In-window identity + generated launcher apps</h3>
+      <p>Use a lightweight in-window marker for every profile, then generate per-profile app wrappers/shortcuts for Dock or taskbar identity.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Pros</h4>
+          <ul>
+            <li>Works even when multiple browser windows are already open.</li>
+            <li>Gives both immediate visual recognition and system-level grouping.</li>
+            <li>Lets Facade own the identity model instead of depending on Chromium UI.</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Cons</h4>
+          <ul>
+            <li>Needs separate implementation paths for macOS and Windows launcher behavior.</li>
+            <li>Wrapper apps/shortcuts add lifecycle complexity.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="option-b" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>B. Chromium-native hints only</h3>
+      <p>Try to lean on Chromium profile theme color, title text, and platform-native profile shortcuts as much as possible.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Pros</h4>
+          <ul>
+            <li>Lower implementation cost.</li>
+            <li>Less custom OS integration code.</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Cons</h4>
+          <ul>
+            <li>Inconsistent across platforms.</li>
+            <li>Facade has less control over final appearance.</li>
+            <li>May still fail to distinguish windows clearly enough.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="option-c" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>C. Facade overlay experience</h3>
+      <p>Add a Facade-owned injected visual layer inside browser windows and treat Dock/taskbar identity as secondary.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Pros</h4>
+          <ul>
+            <li>Most visible and customizable in-window cue.</li>
+            <li>Can show color, name, tags, and runtime state.</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Cons</h4>
+          <ul>
+            <li>Higher risk of interfering with page rendering or automation.</li>
+            <li>Still needs a second strategy for Dock/taskbar identity.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>What each option means in practice</h3>
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">Window Layer</div>
+      <div class="mockup-body">
+        <div style="border-bottom:4px solid #4f46e5;padding:10px 12px;font-weight:600;">Work Profile · Blue identity bar</div>
+        <div class="mock-content" style="min-height:160px;">Persistent visual cue in or around the browser chrome/start page.</div>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">System Icon Layer</div>
+      <div class="mockup-body">
+        <div style="display:flex;gap:12px;align-items:center;justify-content:center;min-height:160px;">
+          <div style="width:58px;height:58px;border:1px solid currentColor;border-radius:14px;display:flex;align-items:center;justify-content:center;font-weight:700;">C</div>
+          <div style="width:58px;height:58px;border:1px solid currentColor;border-radius:14px;display:flex;align-items:center;justify-content:center;font-weight:700;background:rgba(79,70,229,.12);">W</div>
+          <div style="width:58px;height:58px;border:1px solid currentColor;border-radius:14px;display:flex;align-items:center;justify-content:center;font-weight:700;background:rgba(16,185,129,.12);">H</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle">Click the option that feels closest to what you want, then tell me what matters most: implementation speed, visual clarity, or cross-platform consistency.</p>

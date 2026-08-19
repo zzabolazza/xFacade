@@ -2,13 +2,12 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { FolderOpen, Layers } from 'lucide-react'
 import { Button, Card, ConfirmModal, FormItem, Input, Modal, Select, Textarea, toast } from '../../../shared/components'
-import type { BrowserCore, BrowserExtension, BrowserProfileInput, BrowserProxy, BrowserGroup, ProxyLocationResolveResult } from '../types'
-import { browserProxyResolveLocation, createBrowserProfile, fetchAllTags, fetchBrowserCores, fetchBrowserProfiles, fetchBrowserProxies, fetchBrowserSettings, fetchGroups, openUserDataDir, updateBrowserProfile, validateProxyConfig } from '../api'
+import type { BrowserCore, BrowserExtension, BrowserProfileInput, BrowserProxy, ProxyLocationResolveResult } from '../types'
+import { browserProxyResolveLocation, createBrowserProfile, fetchAllTags, fetchBrowserCores, fetchBrowserProfiles, fetchBrowserProxies, fetchBrowserSettings, openUserDataDir, updateBrowserProfile, validateProxyConfig } from '../api'
 import { fetchBrowserExtensions, fetchBrowserProfileExtensionSettings, saveBrowserProfileExtensionSettings } from '../api/extensions'
 import { FingerprintPanel } from '../components/FingerprintPanel'
 import { applyLocaleToFingerprintArgs, getSystemLanguage, getSystemTimezone } from '../utils/fingerprintSerializer'
 import { TagInput } from '../components/TagInput'
-import { GroupSelector } from '../components/GroupSelector'
 import { ProxyPickerModal } from '../components/ProxyPickerModal'
 import { ProfileExtensionPicker } from '../components/ProfileExtensionPicker'
 
@@ -65,12 +64,9 @@ export function BrowserEditPage() {
     proxyConfig: '',
     launchArgs: [],
     tags: [],
-    keywords: [],
-    groupId: '',
   })
   const [cores, setCores] = useState<BrowserCore[]>([])
   const [proxies, setProxies] = useState<BrowserProxy[]>([])
-  const [groups, setGroups] = useState<BrowserGroup[]>([])
   const [launchArgsText, setLaunchArgsText] = useState('')
   const [allTags, setAllTags] = useState<string[]>([])
   const [extensions, setExtensions] = useState<BrowserExtension[]>([])
@@ -95,11 +91,10 @@ export function BrowserEditPage() {
       setProxiesReady(false)
       setExtensionsLoading(true)
       try {
-        const [coreList, proxyList, tagList, groupList, settings, extensionList] = await Promise.all([
+        const [coreList, proxyList, tagList, settings, extensionList] = await Promise.all([
           fetchBrowserCores(),
           fetchBrowserProxies(),
           fetchAllTags(),
-          fetchGroups(),
           fetchBrowserSettings(),
           fetchBrowserExtensions(),
         ])
@@ -107,7 +102,6 @@ export function BrowserEditPage() {
         setCores(coreList)
         setProxies(proxyList)
         setAllTags(tagList)
-        setGroups(groupList)
         setExtensions(extensionList)
 
         if (isCreate) {
@@ -138,8 +132,6 @@ export function BrowserEditPage() {
           proxyConfig: resolvedProxy.proxyConfig,
           launchArgs: currentLaunchArgs,
           tags: current.tags,
-          keywords: current.keywords || [],
-          groupId: current.groupId || '',
         })
         setSelectedExtensionIds(extensionSettings.extensionIds)
         setLaunchArgsText(currentLaunchArgs.join('\n'))
@@ -402,15 +394,6 @@ export function BrowserEditPage() {
               onChange={tags => handleChange('tags', tags)}
               suggestions={allTags}
               placeholder="输入标签后按回车，支持从已有标签选择"
-            />
-          </FormItem>
-          <FormItem label="分组">
-            <GroupSelector
-              groups={groups}
-              value={formData.groupId || ''}
-              onChange={groupId => handleChange('groupId', groupId)}
-              placeholder="未分组"
-              className="w-full"
             />
           </FormItem>
         </div>

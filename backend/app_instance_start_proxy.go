@@ -49,16 +49,6 @@ func (a *App) resolveBrowserStartProxy(input browserStartInput, profile *Browser
 		}
 	}
 
-	log.Info("代理配置检查",
-		logger.F("profile_id", profileID),
-		logger.F("proxy_id", profile.ProxyId),
-		logger.F("profile_proxy_config", profile.ProxyConfig),
-		logger.F("temporary_proxy", usingTemporaryProxy),
-		logger.F("temporary_proxy_id", input.TemporaryProxyID),
-		logger.F("temporary_proxy_config", input.TemporaryProxyConfig),
-		logger.F("resolved_proxy_config", resolvedProxyConfig),
-	)
-
 	if supported, errorMsg := proxy.ValidateProxyConfig(resolvedProxyConfig, proxies, resolvedProxyID); !supported {
 		startErr := fmt.Errorf("实例启动失败：%s", errorMsg)
 		profile.LastError = startErr.Error()
@@ -81,11 +71,6 @@ func (a *App) resolveBrowserStartProxy(input browserStartInput, profile *Browser
 		profile.LastError = startErr.Error()
 		return "", startErr
 	}
-	log.Info("使用原生代理链接",
-		logger.F("profile_id", profileID),
-		logger.F("proxy_id", resolvedProxyID),
-		logger.F("proxy_url", normalized),
-	)
 	return normalized, nil
 }
 

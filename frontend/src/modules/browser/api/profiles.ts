@@ -9,6 +9,42 @@ import type {
 } from '../types'
 import { getBindings, getMockProfiles, nowISOString, setMockProfiles } from './runtime'
 
+const BROWSER_TAG_STORAGE_KEY = 'browser:tags'
+
+function normalizeTags(tags: string[]): string[] {
+  const seen = new Set<string>()
+  const normalized: string[] = []
+  tags.forEach((tag) => {
+    const name = tag.trim()
+    if (!name) return
+    const key = name.toLowerCase()
+    if (seen.has(key)) return
+    seen.add(key)
+    normalized.push(name)
+  })
+  return normalized
+}
+
+function sortTags(tags: string[]): string[] {
+  return [...tags].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+}
+
+function readStoredTags(): string[] {
+  if (typeof window === 'undefined' || !window.localStorage) return []
+  try {
+    const raw = window.localStorage.getItem(BROWSER_TAG_STORAGE_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? normalizeTags(parsed.filter((item): item is string => typeof item === 'string')) : []
+  } catch {
+    return []
+  }
+}
+
+function writeStoredTags(tags: string[]): void {
+  if (typeof window === 'undefined' || !window.localStorage) return
+  window.localStorage.setItem(BROWSER_TAG_STORAGE_KEY, JSON.stringify(sortTags(normalizeTags(tags))))
+}
+
 export async function fetchBrowserProfiles(): Promise<BrowserProfile[]> {
   const bindings: any = await getBindings()
   if (bindings?.BrowserProfileList) {
@@ -31,9 +67,23 @@ export async function fetchAllTags(): Promise<string[]> {
     return (await bindings.BrowserGetAllTags()) || []
   }
 
-  const tags = new Set<string>()
-  getMockProfiles().forEach((profile) => profile.tags?.forEach((tag) => tags.add(tag)))
-  return Array.from(tags).sort()
+  return sortTags(normalizeTags([
+    ...readStoredTags(),
+    ...getMockProfiles().flatMap((profile) => profile.tags || []),
+  ]))
+}
+
+export async function createBrowserTag(tag: string): Promise<boolean> {
+  const name = tag.trim()
+  if (!name) return true
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserCreateTag) {
+    await bindings.BrowserCreateTag(name)
+    return true
+  }
+
+  writeStoredTags([...readStoredTags(), name])
+  return true
 }
 
 export async function exportBrowserProfilePackage(profileIds: string[]): Promise<BrowserProfilePackageExportResult> {
@@ -72,7 +122,6 @@ export async function createBrowserProfile(input: BrowserProfileInput): Promise<
   const profile: BrowserProfile = {
     profileId: `mock-${Date.now()}`,
     ...input,
-    keywords: input.keywords || [],
     running: false,
     debugPort: 0,
     debugReady: false,
@@ -159,19 +208,6 @@ export async function copyBrowserProfile(
   return copy
 }
 
-export async function setProfileKeywords(profileId: string, keywords: string[]): Promise<BrowserProfile | null> {
-  const bindings: any = await getBindings()
-  if (bindings?.BrowserProfileSetKeywords) {
-    return (await bindings.BrowserProfileSetKeywords(profileId, keywords)) || null
-  }
-
-  const nextProfiles = getMockProfiles().map((profile) =>
-    profile.profileId === profileId ? { ...profile, keywords, updatedAt: nowISOString() } : profile,
-  )
-  setMockProfiles(nextProfiles)
-  return nextProfiles.find((profile) => profile.profileId === profileId) || null
-}
-
 export async function getBrowserProfileCode(profileId: string): Promise<string> {
   const bindings: any = await getBindings()
   if (bindings?.BrowserProfileGetCode) {
@@ -202,6 +238,14 @@ export async function batchSetProfileTags(profileIds: string[], tags: string[], 
     await bindings.BrowserProfileBatchSetTags(profileIds, tags, replace)
     return true
   }
+  const normalizedTags = normalizeTags(tags)
+  writeStoredTags([...readStoredTags(), ...normalizedTags])
+  const targetIds = new Set(profileIds)
+  setMockProfiles(getMockProfiles().map((profile) => {
+    if (!targetIds.has(profile.profileId)) return profile
+    const baseTags = replace ? [] : profile.tags || []
+    return { ...profile, tags: normalizeTags([...baseTags, ...normalizedTags]), updatedAt: nowISOString() }
+  }))
   return true
 }
 
@@ -211,6 +255,16 @@ export async function batchRemoveProfileTags(profileIds: string[], tags: string[
     await bindings.BrowserProfileBatchRemoveTags(profileIds, tags)
     return true
   }
+  const removeSet = new Set(normalizeTags(tags).map((tag) => tag.toLowerCase()))
+  const targetIds = new Set(profileIds)
+  setMockProfiles(getMockProfiles().map((profile) => {
+    if (!targetIds.has(profile.profileId)) return profile
+    return {
+      ...profile,
+      tags: (profile.tags || []).filter((tag) => !removeSet.has(tag.trim().toLowerCase())),
+      updatedAt: nowISOString(),
+    }
+  }))
   return true
 }
 
@@ -220,5 +274,14 @@ export async function renameBrowserTag(oldName: string, newName: string): Promis
     await bindings.BrowserRenameTag(oldName, newName)
     return true
   }
+  const oldKey = oldName.trim().toLowerCase()
+  const nextName = newName.trim()
+  if (!oldKey || !nextName) return true
+  writeStoredTags([...readStoredTags().map((tag) => tag.trim().toLowerCase() === oldKey ? nextName : tag), nextName])
+  setMockProfiles(getMockProfiles().map((profile) => ({
+    ...profile,
+    tags: normalizeTags((profile.tags || []).map((tag) => tag.trim().toLowerCase() === oldKey ? nextName : tag)),
+    updatedAt: nowISOString(),
+  })))
   return true
 }

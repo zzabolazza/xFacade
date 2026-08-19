@@ -78,8 +78,6 @@ func (a *App) migrateToSQLite() {
 				}
 			}
 			log.Info("内核数据已迁移", logger.F("count", len(a.config.Browser.Cores)))
-		} else {
-			log.Info("内核表为空，将通过自动检测初始化")
 		}
 	}
 
@@ -93,7 +91,6 @@ func (a *App) migrateToSQLite() {
 			srcProxies = []browser.Proxy{
 				{ProxyId: "__direct__", ProxyName: "直连（不走代理）", ProxyConfig: "direct://"},
 			}
-			log.Info("代理表为空，初始化默认代理")
 		}
 		for _, p := range srcProxies {
 			if err := a.browserMgr.ProxyDAO.Upsert(p); err != nil {

@@ -35,7 +35,6 @@ export function ProxyPoolPage() {
   const [filterProtocol, setFilterProtocol] = useState<string>('all')
   const [filterKeyword, setFilterKeyword] = useState('')
   const [filterGroup, setFilterGroup] = useState<string>('all')
-  const [filterAvailableOnly, setFilterAvailableOnly] = useState(false)
   const [sortColumn, setSortColumn] = useState<string>('')
   const [sortOrder, setSortOrder] = useState<SortOrder>(undefined)
 
@@ -164,11 +163,9 @@ export function ProxyPoolPage() {
     filterProtocol,
     filterKeyword,
     filterGroup,
-    filterAvailableOnly,
     sortColumn,
     sortOrder,
     latencyMap,
-    ipHealthMap,
   })
 
   const {
@@ -272,7 +269,6 @@ export function ProxyPoolPage() {
         filterGroup={filterGroup}
         filterKeyword={filterKeyword}
         filterProtocol={filterProtocol}
-        filterAvailableOnly={filterAvailableOnly}
         groups={groups}
         ipHealthMap={ipHealthMap}
         latencyMap={latencyMap}
@@ -288,14 +284,12 @@ export function ProxyPoolPage() {
           setFilterProtocol('all')
           setFilterKeyword('')
           setFilterGroup('all')
-          setFilterAvailableOnly(false)
         }}
         onDelete={handleDeleteClick}
         onEdit={handleEdit}
         onFilterGroupChange={setFilterGroup}
         onFilterKeywordChange={setFilterKeyword}
         onFilterProtocolChange={setFilterProtocol}
-        onFilterAvailableOnlyChange={setFilterAvailableOnly}
         onOpenBatchDelete={() => setBatchDeleteConfirmOpen(true)}
         onSort={({ column, order }) => {
           setSortColumn(column)

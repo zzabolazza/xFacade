@@ -10,8 +10,6 @@ export interface BrowserProfile {
   proxyBindUpdatedAt?: string
   launchArgs: string[]
   tags: string[]
-  keywords: string[]
-  groupId?: string
   running: boolean
   debugPort: number
   debugReady: boolean
@@ -34,8 +32,6 @@ export interface BrowserProfileInput {
   proxyConfig: string
   launchArgs: string[]
   tags: string[]
-  keywords: string[]
-  groupId?: string
 }
 
 export interface BrowserProfilePackageExportResult {
@@ -254,25 +250,4 @@ export interface BookmarkSyncResult {
   failed: number
   skippedList: string[]
   failedList: string[]
-}
-
-
-// 分组相关类型
-export interface BrowserGroup {
-  groupId: string
-  groupName: string
-  parentId: string
-  sortOrder: number
-  createdAt: string
-  updatedAt: string
-}
-
-export interface BrowserGroupInput {
-  groupName: string
-  parentId: string
-  sortOrder: number
-}
-
-export interface BrowserGroupWithCount extends BrowserGroup {
-  instanceCount: number
 }

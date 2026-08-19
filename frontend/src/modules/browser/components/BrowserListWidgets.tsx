@@ -1,34 +1,44 @@
 import { useEffect, useRef, useState } from 'react'
-import { Archive, ChevronDown, ChevronUp, Copy, Download, Pencil, Play, RefreshCw, Square, Trash2 } from 'lucide-react'
+import { Archive, ChevronDown, ChevronUp, Copy, Download, LayoutGrid, Pencil, Play, RefreshCw, Square, Trash2 } from 'lucide-react'
 
 import { Button, toast } from '../../../shared/components'
 import { regenerateBrowserProfileCode, setBrowserProfileCode } from '../api'
 
 interface BatchToolbarProps {
   selectedCount: number
+  selectedRunningCount: number
   totalCount: number
   onSelectAll: () => void
   onDeselectAll: () => void
   onBatchStart: () => void
+  onRetileRunning: () => void
   onBatchStop: () => void
   onBatchExport: () => void
   onOpenBackup: () => void
   onBatchDelete: () => void
-  batchLoading: boolean
+  batchBusy: boolean
+  batchStarting: boolean
+  batchStopping: boolean
+  retileLoading: boolean
   exporting?: boolean
 }
 
 export function BatchToolbar({
   selectedCount,
+  selectedRunningCount,
   totalCount,
   onSelectAll,
   onDeselectAll,
   onBatchStart,
+  onRetileRunning,
   onBatchStop,
   onBatchExport,
   onOpenBackup,
   onBatchDelete,
-  batchLoading,
+  batchBusy,
+  batchStarting,
+  batchStopping,
+  retileLoading,
   exporting = false,
 }: BatchToolbarProps) {
   if (selectedCount === 0) return null
@@ -39,10 +49,20 @@ export function BatchToolbar({
       <div className="flex gap-1.5 ml-auto">
         <Button size="sm" variant="ghost" onClick={onSelectAll}>全选</Button>
         <Button size="sm" variant="ghost" onClick={onDeselectAll}>取消</Button>
-        <Button size="sm" onClick={onBatchStart} loading={batchLoading} title="批量启动">
+        <Button size="sm" onClick={onBatchStart} loading={batchStarting} disabled={batchBusy && !batchStarting} title="批量启动">
           <Play className="w-3.5 h-3.5" />启动
         </Button>
-        <Button size="sm" variant="secondary" onClick={onBatchStop} loading={batchLoading} title="批量停止">
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={onRetileRunning}
+          loading={retileLoading}
+          disabled={selectedRunningCount === 0 || batchBusy}
+          title={selectedRunningCount > 0 ? '平铺已选运行实例' : '没有已选运行实例'}
+        >
+          <LayoutGrid className="w-3.5 h-3.5" />平铺
+        </Button>
+        <Button size="sm" variant="secondary" onClick={onBatchStop} loading={batchStopping} disabled={batchBusy && !batchStopping} title="批量停止">
           <Square className="w-3.5 h-3.5" />停止
         </Button>
         <Button size="sm" variant="secondary" onClick={onBatchExport} loading={exporting} title="导出实例">
@@ -176,19 +196,19 @@ export function CdpUrlCell({ debugReady, debugPort }: CdpUrlCellProps) {
   )
 }
 
-interface KeywordInlineRowProps {
-  keywords: string[]
+interface TagInlineRowProps {
+  tags: string[]
 }
 
-export function KeywordInlineRow({ keywords }: KeywordInlineRowProps) {
+export function TagInlineRow({ tags }: TagInlineRowProps) {
   const [expanded, setExpanded] = useState(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [isOverflowing, setIsOverflowing] = useState(false)
 
-  const handleCopyKeyword = async (keyword: string) => {
+  const handleCopyTag = async (tag: string) => {
     try {
-      await navigator.clipboard.writeText(keyword)
-      toast.success('关键字已复制')
+      await navigator.clipboard.writeText(tag)
+      toast.success('标签已复制')
     } catch {
       toast.error('复制失败')
     }
@@ -198,9 +218,9 @@ export function KeywordInlineRow({ keywords }: KeywordInlineRowProps) {
     if (containerRef.current) {
       setIsOverflowing(containerRef.current.scrollHeight > 36)
     }
-  }, [keywords])
+  }, [tags])
 
-  if (!keywords?.length) {
+  if (!tags?.length) {
     return <span className="text-xs text-[var(--color-text-muted)]">-</span>
   }
 
@@ -210,16 +230,15 @@ export function KeywordInlineRow({ keywords }: KeywordInlineRowProps) {
         ref={containerRef}
         className={`flex flex-wrap gap-2 flex-1 min-w-0 transition-all duration-300 ${expanded ? '' : 'overflow-hidden max-h-[32px]'}`}
       >
-        {keywords.map((keyword, index) => (
+        {tags.map((tag, index) => (
           <button
             type="button"
-            key={index}
+            key={`${tag}-${index}`}
             className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-2.5 py-1 text-left text-xs text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
-            title={`点击复制：${keyword}`}
-            onClick={() => { void handleCopyKeyword(keyword) }}
+            title={`点击复制：${tag}`}
+            onClick={() => { void handleCopyTag(tag) }}
           >
-            <span className="text-[var(--color-text-muted)] font-mono shrink-0">{index + 1}.</span>
-            <span className="truncate">{keyword}</span>
+            <span className="truncate">{tag}</span>
           </button>
         ))}
       </div>

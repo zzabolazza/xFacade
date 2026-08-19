@@ -74,7 +74,7 @@ export function BrowserBackupModal({
             <span>全量备份范围</span>
           </div>
           <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-[var(--color-text-muted)]">
-            <span>实例名称 / 分组 / 标签</span>
+            <span>实例名称 / 标签</span>
             <span>代理池 / 订阅 / 测速结果</span>
             <span>内核配置路径</span>
             <span>应用书签 / 插件配置</span>

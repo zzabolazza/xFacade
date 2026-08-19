@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ExternalLink, Search } from 'lucide-react'
 import { Button, Modal, toast } from '../../../shared/components'
-import type { BrowserExtension, BrowserGroupWithCount, BrowserProfile, BrowserProfileExtensionSettings } from '../types'
+import type { BrowserExtension, BrowserProfile, BrowserProfileExtensionSettings } from '../types'
 import { fetchBrowserProfileExtensionSettings, saveBrowserProfileExtensionSettings } from '../api/extensions'
-import { fetchGroups } from '../api/groups'
 import { fetchBrowserProfiles } from '../api/profiles'
 import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime'
 import { extensionHistoryActionLabel, formatExtensionTime, sameStringSet, type ExtensionHistoryRecord } from './extensionManagementUtils'
 
-const UNGROUPED_PROFILE_GROUP_ID = '__ungrouped__'
+const UNTAGGED_PROFILE_SECTION = '未打标签'
 
 export interface ExtensionProfileLimitModalProps {
   open: boolean
@@ -18,62 +17,33 @@ export interface ExtensionProfileLimitModalProps {
 
 export function ExtensionProfileLimitModal({ open, extension, onClose }: ExtensionProfileLimitModalProps) {
   const [profiles, setProfiles] = useState<BrowserProfile[]>([])
-  const [groups, setGroups] = useState<BrowserGroupWithCount[]>([])
   const [settingsByProfile, setSettingsByProfile] = useState<Record<string, BrowserProfileExtensionSettings>>({})
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
-  const groupNameMap = useMemo(() => {
-    const map = new Map<string, string>()
-    groups.forEach((group) => map.set(group.groupId, group.groupName))
-    return map
-  }, [groups])
-
-  const profileGroups = useMemo(() => {
+  const profileSections = useMemo(() => {
     const buckets = new Map<string, BrowserProfile[]>()
     profiles.forEach((profile) => {
-      const groupId = (profile.groupId || '').trim() || UNGROUPED_PROFILE_GROUP_ID
-      if (!buckets.has(groupId)) buckets.set(groupId, [])
-      buckets.get(groupId)!.push(profile)
+      const primaryTag = (profile.tags || []).map((tag) => tag.trim()).find(Boolean) || UNTAGGED_PROFILE_SECTION
+      if (!buckets.has(primaryTag)) buckets.set(primaryTag, [])
+      buckets.get(primaryTag)!.push(profile)
     })
 
-    const sections = groups
-      .filter((group) => buckets.has(group.groupId))
-      .sort((a, b) => a.sortOrder - b.sortOrder || a.groupName.localeCompare(b.groupName))
-      .map((group) => ({
-        groupId: group.groupId,
-        groupName: group.groupName,
-        profiles: buckets.get(group.groupId) || [],
-      }))
-
-    for (const [groupId, items] of buckets.entries()) {
-      if (groupId === UNGROUPED_PROFILE_GROUP_ID) continue
-      if (!sections.some((section) => section.groupId === groupId)) {
-        sections.push({
-          groupId,
-          groupName: groupNameMap.get(groupId) || `分组 ${groupId}`,
-          profiles: items,
-        })
-      }
-    }
-
-    if (buckets.has(UNGROUPED_PROFILE_GROUP_ID)) {
-      sections.push({
-        groupId: UNGROUPED_PROFILE_GROUP_ID,
-        groupName: '未分组',
-        profiles: buckets.get(UNGROUPED_PROFILE_GROUP_ID) || [],
+    return Array.from(buckets.entries())
+      .sort(([a], [b]) => {
+        if (a === UNTAGGED_PROFILE_SECTION) return 1
+        if (b === UNTAGGED_PROFILE_SECTION) return -1
+        return a.localeCompare(b, 'zh-CN')
       })
-    }
-
-    return sections
-  }, [profiles, groups, groupNameMap])
+      .map(([tag, items]) => ({ tag, profiles: items }))
+  }, [profiles])
 
   useEffect(() => {
     if (!open || !extension) return
     setLoading(true)
-    Promise.all([fetchBrowserProfiles(), fetchGroups()]).then(async ([profileItems, groupItems]) => {
+    fetchBrowserProfiles().then(async (profileItems) => {
       const profileSettings = await Promise.all(profileItems.map(async (profile) => ({
         profile,
         settings: await fetchBrowserProfileExtensionSettings(profile.profileId),
@@ -83,7 +53,6 @@ export function ExtensionProfileLimitModal({ open, extension, onClose }: Extensi
         settingsMap[profile.profileId] = settings
       })
       setProfiles(profileItems)
-      setGroups(groupItems)
       setSettingsByProfile(settingsMap)
       setSelectedIds(profileItems
         .filter((profile) => {
@@ -103,7 +72,7 @@ export function ExtensionProfileLimitModal({ open, extension, onClose }: Extensi
     })
   }
 
-  const toggleGroup = (profileIds: string[], checked: boolean) => {
+  const toggleSection = (profileIds: string[], checked: boolean) => {
     setSelectedIds((current) => {
       const next = new Set(current)
       profileIds.forEach((profileId) => {
@@ -161,24 +130,24 @@ export function ExtensionProfileLimitModal({ open, extension, onClose }: Extensi
             勾选的实例会加载此插件；未勾选的实例会排除此插件。
           </div>
           <div className="max-h-[420px] space-y-3 overflow-auto pr-1">
-            {profileGroups.map((group) => {
-              const groupProfileIds = group.profiles.map((profile) => profile.profileId)
-              const selectedCount = groupProfileIds.filter((profileId) => selectedSet.has(profileId)).length
-              const allSelected = groupProfileIds.length > 0 && selectedCount === groupProfileIds.length
+            {profileSections.map((section) => {
+              const sectionProfileIds = section.profiles.map((profile) => profile.profileId)
+              const selectedCount = sectionProfileIds.filter((profileId) => selectedSet.has(profileId)).length
+              const allSelected = sectionProfileIds.length > 0 && selectedCount === sectionProfileIds.length
 
               return (
-                <section key={group.groupId} className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
+                <section key={section.tag} className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
                   <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border-muted)] px-3 py-2">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">{group.groupName}</div>
-                      <div className="text-xs text-[var(--color-text-muted)]">已选 {selectedCount} / {groupProfileIds.length}</div>
+                      <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">{section.tag}</div>
+                      <div className="text-xs text-[var(--color-text-muted)]">已选 {selectedCount} / {sectionProfileIds.length}</div>
                     </div>
-                    <Button size="sm" variant="ghost" onClick={() => toggleGroup(groupProfileIds, !allSelected)}>
-                      {allSelected ? '取消本组' : '选择本组'}
+                    <Button size="sm" variant="ghost" onClick={() => toggleSection(sectionProfileIds, !allSelected)}>
+                      {allSelected ? '取消此标签' : '选择此标签'}
                     </Button>
                   </div>
                   <div className="divide-y divide-[var(--color-border-muted)]">
-                    {group.profiles.map((profile) => (
+                    {section.profiles.map((profile) => (
                       <label key={profile.profileId} className="flex items-start gap-3 px-3 py-2">
                         <input
                           type="checkbox"

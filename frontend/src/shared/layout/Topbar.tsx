@@ -162,7 +162,7 @@ export function Topbar() {
         className="ml-auto hidden h-9 w-[260px] items-center gap-2 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-base)] px-3 text-left text-[12.5px] text-[var(--color-text-muted)] lg:flex"
       >
         <Search className="h-3.5 w-3.5" />
-        <span className="min-w-0 flex-1 truncate">搜索实例 / 分组 / 标签...</span>
+        <span className="min-w-0 flex-1 truncate">搜索实例 / 标签...</span>
       </div>
 
       <div className="flex items-center gap-1">

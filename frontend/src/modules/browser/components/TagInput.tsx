@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 
 interface TagInputProps {
@@ -11,6 +12,8 @@ interface TagInputProps {
 export function TagInput({ value, onChange, suggestions = [], placeholder = '输入标签后按回车' }: TagInputProps) {
   const [input, setInput] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties | null>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const filtered = suggestions.filter(
@@ -43,7 +46,7 @@ export function TagInput({ value, onChange, suggestions = [], placeholder = '输
   // 点击外部关闭建议
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (inputRef.current && !inputRef.current.closest('.tag-input-wrap')?.contains(e.target as Node)) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
         setShowSuggestions(false)
       }
     }
@@ -51,8 +54,35 @@ export function TagInput({ value, onChange, suggestions = [], placeholder = '输
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
+  useLayoutEffect(() => {
+    if (!showSuggestions || filtered.length === 0) {
+      setDropdownStyle(null)
+      return
+    }
+
+    const updateDropdownStyle = () => {
+      const rect = wrapRef.current?.getBoundingClientRect()
+      if (!rect) return
+      setDropdownStyle({
+        position: 'fixed',
+        left: rect.left,
+        top: rect.bottom + 4,
+        width: rect.width,
+        maxHeight: Math.max(120, Math.min(260, window.innerHeight - rect.bottom - 16)),
+      })
+    }
+
+    updateDropdownStyle()
+    window.addEventListener('resize', updateDropdownStyle)
+    window.addEventListener('scroll', updateDropdownStyle, true)
+    return () => {
+      window.removeEventListener('resize', updateDropdownStyle)
+      window.removeEventListener('scroll', updateDropdownStyle, true)
+    }
+  }, [showSuggestions, filtered.length])
+
   return (
-    <div className="tag-input-wrap relative">
+    <div ref={wrapRef} className="tag-input-wrap relative">
       <div
         className="min-h-9 flex flex-wrap gap-1.5 items-center px-3 py-1.5 rounded-md border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] cursor-text focus-within:border-[var(--color-accent)] transition-colors"
         onClick={() => inputRef.current?.focus()}
@@ -83,8 +113,11 @@ export function TagInput({ value, onChange, suggestions = [], placeholder = '输
         />
       </div>
 
-      {showSuggestions && filtered.length > 0 && (
-        <div className="absolute top-full z-20 mt-1 w-full overflow-hidden rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] shadow-[var(--shadow-lg)] animate-scale-in">
+      {showSuggestions && filtered.length > 0 && dropdownStyle && createPortal(
+        <div
+          style={dropdownStyle}
+          className="z-[60] overflow-y-auto rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] shadow-[var(--shadow-lg)] animate-scale-in"
+        >
           {filtered.slice(0, 8).map(s => (
             <button
               key={s}
@@ -95,7 +128,8 @@ export function TagInput({ value, onChange, suggestions = [], placeholder = '输
               {s}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

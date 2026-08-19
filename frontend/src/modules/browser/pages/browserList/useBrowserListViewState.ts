@@ -28,7 +28,15 @@ export function useBrowserListViewState() {
       const saved = localStorage.getItem('browser:filters')
       if (saved) {
         const parsed = JSON.parse(saved)
-        return { ...EMPTY_FILTERS, ...parsed, tags: new Set(parsed.tags || []) }
+        const { tags, keyword, status, proxyId, coreId } = parsed
+        return {
+          ...EMPTY_FILTERS,
+          keyword: keyword || '',
+          status: status || '',
+          proxyId: proxyId || '',
+          coreId: coreId || '',
+          tags: new Set(tags || []),
+        }
       }
     } catch { /* ignore */ }
     return EMPTY_FILTERS
@@ -99,11 +107,8 @@ export function useBrowserListDerived(
   )
 
   const filteredProfiles = useMemo(() => {
-    const unifiedKeyword = filters.keyword || filters.kwSearch
     return profiles.filter(profile => {
-      if (filters.groupId === '__ungrouped__' && profile.groupId) return false
-      if (filters.groupId && filters.groupId !== '__ungrouped__' && profile.groupId !== filters.groupId) return false
-      if (unifiedKeyword && !matchesProfileKeyword(profile, unifiedKeyword)) return false
+      if (filters.keyword && !matchesProfileSearch(profile, filters.keyword)) return false
       if (filters.status === 'running' && !profile.running) return false
       if (filters.status === 'stopped' && profile.running) return false
       if (filters.proxyId === '__none__' && (profile.proxyId || profile.proxyConfig)) return false
@@ -138,7 +143,7 @@ function normalizeCompactSearchText(value: string): string {
   return normalizeSearchText(value).replace(/[\s_-]+/g, '')
 }
 
-function matchesProfileKeyword(profile: BrowserProfile, keyword: string): boolean {
+function matchesProfileSearch(profile: BrowserProfile, keyword: string): boolean {
   const query = normalizeSearchText(keyword)
   if (!query) return true
 
@@ -150,9 +155,7 @@ function matchesProfileKeyword(profile: BrowserProfile, keyword: string): boolea
     profile.userDataDir,
     profile.proxyId,
     profile.proxyBindName,
-    profile.groupId,
     ...(profile.tags || []),
-    ...(profile.keywords || []),
   ]
 
   return values.some(value => {

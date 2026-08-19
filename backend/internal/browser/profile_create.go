@@ -63,7 +63,15 @@ func (m *Manager) Create(input ProfileInput) (*Profile, error) {
 		)
 	}
 	m.Profiles[profileId] = profile
-	log.Info("浏览器配置创建", logger.F("profile_id", profileId), logger.F("profile_name", input.ProfileName))
+	log.Info("浏览器配置创建",
+		logger.F("profile_id", profileId),
+		logger.F("profile_name", input.ProfileName),
+		logger.F("core_id", coreId),
+		logger.F("proxy_id", profile.ProxyId),
+		logger.F("group_id", profile.GroupId),
+		logger.F("tag_count", len(profile.Tags)),
+		logger.F("launch_arg_count", len(profile.LaunchArgs)),
+	)
 	if err := m.SaveProfiles(); err != nil {
 		return nil, err
 	}

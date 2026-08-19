@@ -50,7 +50,15 @@ func (m *Manager) Update(profileId string, input ProfileInput) (*Profile, error)
 	profile.GroupId = buildProfileGroupID(input.GroupId)
 	profile.UpdatedAt = time.Now().Format(time.RFC3339)
 
-	log.Info("浏览器配置更新", logger.F("profile_id", profileId), logger.F("profile_name", input.ProfileName))
+	log.Info("浏览器配置更新",
+		logger.F("profile_id", profileId),
+		logger.F("profile_name", input.ProfileName),
+		logger.F("core_id", profile.CoreId),
+		logger.F("proxy_id", profile.ProxyId),
+		logger.F("group_id", profile.GroupId),
+		logger.F("tag_count", len(profile.Tags)),
+		logger.F("launch_arg_count", len(profile.LaunchArgs)),
+	)
 	if err := m.SaveProfiles(); err != nil {
 		return nil, err
 	}

@@ -188,6 +188,18 @@ WHERE NOT EXISTS (
 )`,
 		},
 		{
+			name: "browser_tags",
+			insertAll: `INSERT INTO browser_tags (tag_name, created_at, updated_at)
+SELECT tag_name, created_at, updated_at FROM src.browser_tags`,
+			insertSafe: `INSERT INTO browser_tags (tag_name, created_at, updated_at)
+SELECT s.tag_name, s.created_at, s.updated_at
+FROM src.browser_tags s
+WHERE trim(s.tag_name) <> ''
+AND NOT EXISTS (
+  SELECT 1 FROM browser_tags t WHERE lower(t.tag_name) = lower(s.tag_name)
+)`,
+		},
+		{
 			name: "browser_extensions",
 			insertAll: `INSERT INTO browser_extensions (extension_id, name, version, description, manifest_json, source_url, install_dir, enabled, installed_at, updated_at)
 SELECT extension_id, name, version, description, manifest_json, source_url, install_dir, enabled, installed_at, updated_at FROM src.browser_extensions`,
@@ -319,7 +331,7 @@ func (a *App) backupFixExtensionInstallDirs() error {
 	defer rows.Close()
 
 	type extRecord struct {
-		id       string
+		id         string
 		installDir string
 	}
 	var records []extRecord

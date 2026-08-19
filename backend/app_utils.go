@@ -84,7 +84,6 @@ func (a *App) loadProxies() {
 			log.Error("从数据库读取代理失败", logger.F("error", err.Error()))
 		} else if len(list) > 0 {
 			a.config.Browser.Proxies = list
-			log.Info("代理数据从数据库加载完成", logger.F("count", len(list)))
 			return
 		}
 	}
@@ -97,12 +96,10 @@ func (a *App) loadProxies() {
 	if loaded != nil {
 		proxies := ensureBuiltins(loaded)
 		a.config.Browser.Proxies = proxies
-		log.Info("代理数据从 proxies.yaml 加载完成", logger.F("count", len(proxies)))
 		return
 	}
 
 	// 最终降级：使用 config.yaml 中的数据
 	proxies := ensureBuiltins(a.config.Browser.Proxies)
 	a.config.Browser.Proxies = proxies
-	log.Info("代理数据使用 config.yaml 默认值", logger.F("count", len(proxies)))
 }

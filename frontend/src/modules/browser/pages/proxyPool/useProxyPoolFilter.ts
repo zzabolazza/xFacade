@@ -1,6 +1,5 @@
 import { useMemo } from 'react'
 import type { SortOrder } from '../../../../shared/components/Table'
-import type { ProxyIPHealthResult } from '../../types'
 import type { ProxyDisplayInfo } from './helpers'
 
 interface UseProxyPoolFilterOptions {
@@ -8,11 +7,9 @@ interface UseProxyPoolFilterOptions {
   filterProtocol: string
   filterKeyword: string
   filterGroup: string
-  filterAvailableOnly: boolean
   sortColumn: string
   sortOrder: SortOrder
   latencyMap: Record<string, number>
-  ipHealthMap: Record<string, ProxyIPHealthResult>
 }
 
 const compareText = (a: string, b: string) => a.localeCompare(b, 'zh-CN')
@@ -25,15 +22,6 @@ function getLatencySortTuple(latencyMap: Record<string, number>, proxyId: string
   if (latency === -3) return [3, Number.MAX_SAFE_INTEGER]
   if (latency === -4) return [4, Number.MAX_SAFE_INTEGER]
   return [0, latency]
-}
-
-function isProxyAvailable(
-  proxyId: string,
-  latencyMap: Record<string, number>,
-  ipHealthMap: Record<string, ProxyIPHealthResult>,
-) {
-  const latency = latencyMap[proxyId]
-  return (typeof latency === 'number' && latency >= 0) || Boolean(ipHealthMap[proxyId]?.ok)
 }
 
 function compareByColumn(
@@ -71,11 +59,9 @@ export function useProxyPoolFilter(options: UseProxyPoolFilterOptions) {
     filterProtocol,
     filterKeyword,
     filterGroup,
-    filterAvailableOnly,
     sortColumn,
     sortOrder,
     latencyMap,
-    ipHealthMap,
   } = options
 
   const protocolOptions = useMemo(
@@ -89,8 +75,7 @@ export function useProxyPoolFilter(options: UseProxyPoolFilterOptions) {
       const matchProtocol = filterProtocol === 'all' || p.type === filterProtocol
       const matchKeyword = !keyword || p.proxyName.toLowerCase().includes(keyword) || p.server.toLowerCase().includes(keyword)
       const matchGroup = filterGroup === 'all' || p.groupName === filterGroup
-      const matchAvailable = !filterAvailableOnly || isProxyAvailable(p.proxyId, latencyMap, ipHealthMap)
-      return matchProtocol && matchKeyword && matchGroup && matchAvailable
+      return matchProtocol && matchKeyword && matchGroup
     })
 
     if (!sortColumn || !sortOrder) return filtered
@@ -98,7 +83,7 @@ export function useProxyPoolFilter(options: UseProxyPoolFilterOptions) {
       const cmp = compareByColumn(latencyMap, a, b, sortColumn)
       return sortOrder === 'asc' ? cmp : -cmp
     })
-  }, [displayList, filterProtocol, filterKeyword, filterGroup, filterAvailableOnly, sortColumn, sortOrder, latencyMap, ipHealthMap])
+  }, [displayList, filterProtocol, filterKeyword, filterGroup, sortColumn, sortOrder, latencyMap])
 
   return { protocolOptions, filteredList }
 }

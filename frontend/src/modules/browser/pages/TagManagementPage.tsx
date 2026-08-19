@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Tag, Trash2, X } from 'lucide-react'
 import { Badge, Button, Card, Loading, toast } from '../../../shared/components'
 import type { BrowserProfile } from '../types'
-import { batchRemoveProfileTags, batchSetProfileTags, fetchBrowserProfiles, renameBrowserTag } from '../api'
+import { batchRemoveProfileTags, batchSetProfileTags, createBrowserTag, fetchAllTags, fetchBrowserProfiles, renameBrowserTag } from '../api'
 
 // ─── 左侧标签面板 ────────────────────────────────────────────────────────────
 
@@ -12,7 +12,7 @@ interface TagPanelProps {
   profilesByTag: Record<string, number>
   totalCount: number
   onSelect: (tag: string | null) => void
-  onCreateTag: (tag: string) => void
+  onCreateTag: (tag: string) => void | Promise<void>
   onRenameTag: (oldName: string, newName: string) => void
 }
 
@@ -28,7 +28,6 @@ function TagPanel({ tags, selected, profilesByTag, totalCount, onSelect, onCreat
     const t = newTag.trim()
     if (t && !tags.includes(t)) {
       onCreateTag(t)
-      onSelect(t)
     }
     setNewTag('')
     setCreating(false)
@@ -204,36 +203,50 @@ function ActionBar({ selectedCount, allTags, onAddTags, onRemoveTags, onClear }:
 
 export function TagManagementPage() {
   const [profiles, setProfiles] = useState<BrowserProfile[]>([])
+  const [allTags, setAllTags] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
-  // 用户新建但尚未分配给任何实例的标签（纯前端暂存）
-  const [pendingTags, setPendingTags] = useState<string[]>([])
 
-  // 合并：实例已有标签 + 用户新建的待分配标签
-  const allTagsWithPending = useMemo(() => {
-    const set = new Set<string>()
-    profiles.forEach(p => p.tags?.forEach(t => set.add(t)))
-    pendingTags.forEach(t => set.add(t))
-    return Array.from(set).sort()
-  }, [profiles, pendingTags])
-
-  const handleCreateTag = (tag: string) => {
-    if (!allTagsWithPending.includes(tag)) {
-      setPendingTags(prev => [...prev, tag])
+  const mergeTags = (nextProfiles: BrowserProfile[], savedTags: string[]) => {
+    const map = new Map<string, string>()
+    const add = (tag: string) => {
+      const name = tag.trim()
+      if (!name) return
+      const key = name.toLowerCase()
+      if (!map.has(key)) map.set(key, name)
     }
+    nextProfiles.forEach(p => p.tags?.forEach(add))
+    savedTags.forEach(add)
+    return Array.from(map.values()).sort()
+  }
+
+  const handleCreateTag = async (tag: string) => {
+    const name = tag.trim()
+    if (!name) return
+    const existing = allTags.find(t => t.toLowerCase() === name.toLowerCase())
+    if (existing) {
+      setSelectedTag(existing)
+      return
+    }
+    setSaving(true)
+    try {
+      await createBrowserTag(name)
+      toast.success('标签已创建')
+      await load()
+      setSelectedTag(name)
+    } catch (e: any) {
+      toast.error(e?.message || '创建标签失败')
+    } finally { setSaving(false) }
   }
 
   const load = async () => {
     setLoading(true)
     try {
-      const data = await fetchBrowserProfiles()
+      const [data, tags] = await Promise.all([fetchBrowserProfiles(), fetchAllTags()])
       setProfiles(data)
-      // 清理已被实例使用的 pendingTags
-      const usedTags = new Set<string>()
-      data.forEach(p => p.tags?.forEach(t => usedTags.add(t)))
-      setPendingTags(prev => prev.filter(t => !usedTags.has(t)))
+      setAllTags(mergeTags(data, tags))
     } finally { setLoading(false) }
   }
 
@@ -241,8 +254,6 @@ export function TagManagementPage() {
 
   // 重置勾选当切换标签时
   useEffect(() => { setSelectedIds(new Set()) }, [selectedTag])
-
-  const allTags = allTagsWithPending
 
   const profilesByTag = useMemo(() => {
     const map: Record<string, number> = {}
@@ -303,9 +314,6 @@ export function TagManagementPage() {
     try {
       await renameBrowserTag(oldName, newName.trim())
       toast.success('标签重命名成功')
-      if (pendingTags.includes(oldName)) {
-        setPendingTags(prev => prev.map(t => t === oldName ? newName.trim() : t))
-      }
       if (selectedTag === oldName) {
         setSelectedTag(newName.trim())
       }
@@ -320,7 +328,7 @@ export function TagManagementPage() {
   return (
     <div className="flex h-full flex-col gap-4 animate-fade-in">
       <p className="max-w-2xl text-[12.5px] leading-5 text-[var(--color-text-muted)]">
-        创建标签用于分组与批量操作；左侧选标签筛选实例，右侧可批量打标或移除。
+        创建标签用于分类与批量操作；左侧选标签筛选实例，右侧可批量打标或移除。
       </p>
 
       <div className="flex min-h-0 flex-1 gap-4">

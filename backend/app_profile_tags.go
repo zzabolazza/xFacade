@@ -7,9 +7,52 @@ import (
 	"time"
 )
 
+func normalizeBrowserTagList(tags []string) []string {
+	seen := make(map[string]struct{}, len(tags))
+	normalized := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		key := strings.ToLower(tag)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, tag)
+	}
+	return normalized
+}
+
+// BrowserCreateTag 保存一个未分配给实例的标签。
+func (a *App) BrowserCreateTag(tag string) error {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return fmt.Errorf("标签名称不能为空")
+	}
+	if a.browserMgr == nil || a.browserMgr.TagDAO == nil {
+		return fmt.Errorf("标签存储未初始化")
+	}
+	return a.browserMgr.TagDAO.Upsert(tag)
+}
+
 // BrowserProfileBatchSetTags 批量为实例设置标签（追加模式：将 tags 加入已有标签；replace 模式：直接替换）
 func (a *App) BrowserProfileBatchSetTags(profileIds []string, tags []string, replace bool) error {
 	log := logger.New("Browser")
+	tags = normalizeBrowserTagList(tags)
+	if len(tags) == 0 && !replace {
+		return nil
+	}
+	if len(tags) > 0 && a.browserMgr.TagDAO != nil {
+		for _, tag := range tags {
+			if err := a.browserMgr.TagDAO.Upsert(tag); err != nil {
+				return err
+			}
+		}
+	}
+
+	a.browserMgr.InitData()
 	a.browserMgr.Mutex.Lock()
 	defer a.browserMgr.Mutex.Unlock()
 
@@ -19,16 +62,17 @@ func (a *App) BrowserProfileBatchSetTags(profileIds []string, tags []string, rep
 			continue
 		}
 		if replace {
-			profile.Tags = tags
+			profile.Tags = append([]string{}, tags...)
 		} else {
 			existing := make(map[string]struct{})
 			for _, tag := range profile.Tags {
-				existing[tag] = struct{}{}
+				existing[strings.ToLower(strings.TrimSpace(tag))] = struct{}{}
 			}
 			for _, tag := range tags {
-				if _, ok := existing[tag]; !ok {
+				key := strings.ToLower(tag)
+				if _, ok := existing[key]; !ok {
 					profile.Tags = append(profile.Tags, tag)
-					existing[tag] = struct{}{}
+					existing[key] = struct{}{}
 				}
 			}
 		}
@@ -46,12 +90,13 @@ func (a *App) BrowserProfileBatchSetTags(profileIds []string, tags []string, rep
 // BrowserProfileBatchRemoveTags 批量从实例移除指定标签
 func (a *App) BrowserProfileBatchRemoveTags(profileIds []string, tags []string) error {
 	log := logger.New("Browser")
+	a.browserMgr.InitData()
 	a.browserMgr.Mutex.Lock()
 	defer a.browserMgr.Mutex.Unlock()
 
 	removeSet := make(map[string]struct{})
-	for _, tag := range tags {
-		removeSet[tag] = struct{}{}
+	for _, tag := range normalizeBrowserTagList(tags) {
+		removeSet[strings.ToLower(tag)] = struct{}{}
 	}
 
 	for _, profileID := range profileIds {
@@ -61,7 +106,7 @@ func (a *App) BrowserProfileBatchRemoveTags(profileIds []string, tags []string) 
 		}
 		filtered := profile.Tags[:0]
 		for _, tag := range profile.Tags {
-			if _, ok := removeSet[tag]; !ok {
+			if _, ok := removeSet[strings.ToLower(strings.TrimSpace(tag))]; !ok {
 				filtered = append(filtered, tag)
 			}
 		}
@@ -85,7 +130,13 @@ func (a *App) BrowserRenameTag(oldName string, newName string) error {
 	if oldName == "" || newName == "" {
 		return fmt.Errorf("标签名称不能为空")
 	}
+	if a.browserMgr != nil && a.browserMgr.TagDAO != nil {
+		if err := a.browserMgr.TagDAO.Rename(oldName, newName); err != nil {
+			return err
+		}
+	}
 
+	a.browserMgr.InitData()
 	a.browserMgr.Mutex.Lock()
 	defer a.browserMgr.Mutex.Unlock()
 

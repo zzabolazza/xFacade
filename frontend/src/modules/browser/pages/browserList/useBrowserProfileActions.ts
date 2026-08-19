@@ -4,13 +4,15 @@ import {
   deleteBrowserProfile,
   focusBrowserInstance,
   restartBrowserInstance,
-  startBrowserInstance,
-  startBrowserInstanceDirect,
+  startBrowserInstanceDirectWithParams,
+  startBrowserInstanceWithParams,
   stopBrowserInstance,
   validateProxyConfig,
 } from '../../api'
 import type { BrowserProfile } from '../../types'
 import { resolveActionErrorMessage, resolveActionFeedback } from '../../utils/actionErrors'
+
+const maximizedLaunchArgs = ['--start-maximized']
 
 interface UseBrowserProfileActionsOptions {
   profiles: BrowserProfile[]
@@ -55,7 +57,9 @@ export function useBrowserProfileActions({
         }
       }
 
-      const startedProfile = await startBrowserInstance(profileId)
+      const startedProfile = await startBrowserInstanceWithParams(profileId, {
+        extraLaunchArgs: maximizedLaunchArgs,
+      })
       mergeProfileState(startedProfile)
       if (startedProfile?.runtimeWarning) {
         toast.warning(startedProfile.runtimeWarning)
@@ -79,7 +83,9 @@ export function useBrowserProfileActions({
   const handleStartDirect = async (profileId: string) => {
     updatePendingIds(setStartingIds, profileId, true)
     try {
-      const startedProfile = await startBrowserInstanceDirect(profileId)
+      const startedProfile = await startBrowserInstanceDirectWithParams(profileId, {
+        extraLaunchArgs: maximizedLaunchArgs,
+      })
       mergeProfileState(startedProfile)
       setProxyErrorModal(false)
       setPendingStartId(null)

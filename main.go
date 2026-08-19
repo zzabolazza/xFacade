@@ -1,10 +1,10 @@
 package main
 
 import (
-	"facade/backend"
 	"context"
 	"embed"
 	"encoding/json"
+	"facade/backend"
 	"log"
 	"os"
 	"path/filepath"
@@ -75,6 +75,14 @@ func resolveBuildVersion() string {
 
 func NewApp(appRoot, version string) *App {
 	return &App{App: backend.NewApp(appRoot, version)}
+}
+
+func (a *App) BrowserInstanceStartDirectWithParams(profileId string, extraLaunchArgs []string, startURLs []string, skipDefaultStartURLs bool) (*backend.BrowserProfile, error) {
+	return a.App.BrowserInstanceStartDirectWithParams(profileId, extraLaunchArgs, startURLs, skipDefaultStartURLs)
+}
+
+func (a *App) BrowserInstanceSetWindowBounds(profileId string, bounds backend.BrowserWindowBounds) (*backend.BrowserProfile, error) {
+	return a.App.BrowserInstanceSetWindowBounds(profileId, bounds)
 }
 
 func (a *App) startup(ctx context.Context) {

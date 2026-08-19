@@ -11,6 +11,7 @@ import { ProfileExtensionModal } from '../components/ProfileExtensionModal'
 import { createBrowserProfileCopyOptions, isBrowserProfileCopyOptionsValid } from '../copyOptions'
 import { buildBrowserProfileCopyName } from '../copyName'
 import { resolveActionFeedback } from '../utils/actionErrors'
+import { buildBrowserWindowTiles } from '../utils/windowTiling'
 import { BrowserListDialogs } from './browserList/BrowserListDialogs'
 import { useBrowserListDerived, useBrowserListViewState } from './browserList/useBrowserListViewState'
 import { useBrowserListData } from './browserList/useBrowserListData'
@@ -20,7 +21,8 @@ import {
   deleteBrowserProfile,
   exportBrowserProfilePackage,
   importBrowserProfilePackage,
-  startBrowserInstance,
+  setBrowserInstanceWindowBounds,
+  startBrowserInstanceWithParams,
   stopBrowserInstance,
   updateBrowserProfile,
   exportFullBrowserBackup,
@@ -41,7 +43,11 @@ export function BrowserListPage() {
   } = useBrowserListViewState()
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [batchLoading, setBatchLoading] = useState(false)
+  const [batchOperation, setBatchOperation] = useState<'start' | 'stop' | 'delete' | null>(null)
+  const batchLoading = batchOperation !== null
+  const batchStarting = batchOperation === 'start'
+  const batchStopping = batchOperation === 'stop'
+  const [retileLoading, setRetileLoading] = useState(false)
   const [profilePackageBusy, setProfilePackageBusy] = useState(false)
   const [backupModalOpen, setBackupModalOpen] = useState(false)
   const [backupLoadingMode, setBackupLoadingMode] = useState<BackupLoadingMode>('none')
@@ -58,12 +64,6 @@ export function BrowserListPage() {
   const [proxyErrorMsg, setProxyErrorMsg] = useState('')
   const [opError, setOpError] = useState('')
   const [pendingStartId, setPendingStartId] = useState<string | null>(null)
-
-  // 关键字弹窗
-  const [kwModal, setKwModal] = useState<{ open: boolean; profile: BrowserProfile | null }>({ open: false, profile: null })
-
-  const openKwModal = (profile: BrowserProfile) => setKwModal({ open: true, profile })
-  const closeKwModal = () => setKwModal({ open: false, profile: null })
 
   const [extensionModal, setExtensionModal] = useState<{ open: boolean; profile: BrowserProfile | null }>({ open: false, profile: null })
   const openExtensionModal = (profile: BrowserProfile) => setExtensionModal({ open: true, profile })
@@ -92,13 +92,11 @@ export function BrowserListPage() {
     loading,
     proxies,
     cores,
-    groups,
     startingIds,
     stoppingIds,
     setStartingIds,
     setStoppingIds,
     updatePendingIds,
-    updateProfilesState,
     mergeProfileState,
     updateProxiesState,
     loadProfiles,
@@ -152,18 +150,27 @@ export function BrowserListPage() {
   }
 
   const handleBatchStart = async () => {
-    const ids = Array.from(selectedIds)
-    if (ids.length === 0) return
-    setBatchLoading(true)
+    const startTargets = Array.from(selectedIds)
+      .map(id => profiles.find(profile => profile.profileId === id))
+      .filter((profile): profile is BrowserProfile => !!profile && !profile.running)
+    if (startTargets.length === 0) {
+      toast.warning('没有需要启动的实例')
+      return
+    }
+
+    const tiles = buildBrowserWindowTiles(startTargets.length)
+    setBatchOperation('start')
     let success = 0, pending = 0, failed = 0
     const pendingMessages: string[] = []
     const failureMessages: string[] = []
-    for (const id of ids) {
-      const profile = profiles.find(p => p.profileId === id)
-      if (!profile || profile.running) continue
-      updatePendingIds(setStartingIds, id, true)
+    for (let index = 0; index < startTargets.length; index += 1) {
+      const profile = startTargets[index]
+      const tile = tiles[index]
+      updatePendingIds(setStartingIds, profile.profileId, true)
       try {
-        const startedProfile = await startBrowserInstance(id)
+        const startedProfile = await startBrowserInstanceWithParams(profile.profileId, {
+          extraLaunchArgs: tile?.launchArgs || [],
+        })
         mergeProfileState(startedProfile)
         success++
       } catch (error: any) {
@@ -176,10 +183,10 @@ export function BrowserListPage() {
           failureMessages.push(`${profile.profileName}：${feedback.message}`)
         }
       } finally {
-        updatePendingIds(setStartingIds, id, false)
+        updatePendingIds(setStartingIds, profile.profileId, false)
       }
     }
-    setBatchLoading(false)
+    setBatchOperation(null)
     const summary = [`成功 ${success}`]
     if (pending > 0) summary.push(`待接管 ${pending}`)
     if (failed > 0) summary.push(`失败 ${failed}`)
@@ -197,10 +204,56 @@ export function BrowserListPage() {
     loadProfiles()
   }
 
+  const handleRetileRunning = async () => {
+    const runningTargets = Array.from(selectedIds)
+      .map(id => profiles.find(profile => profile.profileId === id))
+      .filter((profile): profile is BrowserProfile => !!profile && profile.running)
+    if (runningTargets.length === 0) {
+      toast.warning('没有已选的运行实例')
+      return
+    }
+
+    const tiles = buildBrowserWindowTiles(runningTargets.length)
+    setRetileLoading(true)
+    let success = 0, failed = 0
+    const failureMessages: string[] = []
+    for (let index = 0; index < runningTargets.length; index += 1) {
+      const profile = runningTargets[index]
+      const tile = tiles[index]
+      if (!tile) continue
+      try {
+        const updatedProfile = await setBrowserInstanceWindowBounds(profile.profileId, {
+          left: tile.x,
+          top: tile.y,
+          width: tile.width,
+          height: tile.height,
+        })
+        mergeProfileState(updatedProfile)
+        success++
+      } catch (error: any) {
+        failed++
+        const feedback = resolveActionFeedback(error, '平铺失败')
+        failureMessages.push(`${profile.profileName}：${feedback.message}`)
+      }
+    }
+    setRetileLoading(false)
+    if (success > 0) {
+      toast.success(`平铺完成：成功 ${success}${failed > 0 ? `，失败 ${failed}` : ''}`)
+    } else {
+      toast.error(`平铺失败：失败 ${failed}`)
+    }
+    if (failureMessages.length > 0) {
+      const preview = failureMessages.slice(0, 3)
+      const more = failureMessages.length > preview.length ? `\n另有 ${failureMessages.length - preview.length} 个实例平铺失败。` : ''
+      toast.error(`以下实例平铺失败：\n${preview.join('\n')}${more}`)
+    }
+    await loadProfiles({ silent: true, syncRuntimeState: true })
+  }
+
   const handleBatchStop = async () => {
     const ids = Array.from(selectedIds)
     if (ids.length === 0) return
-    setBatchLoading(true)
+    setBatchOperation('stop')
     let success = 0, failed = 0
     for (const id of ids) {
       const profile = profiles.find(p => p.profileId === id)
@@ -216,7 +269,7 @@ export function BrowserListPage() {
         updatePendingIds(setStoppingIds, id, false)
       }
     }
-    setBatchLoading(false)
+    setBatchOperation(null)
     toast.success(`批量停止完成：成功 ${success}${failed > 0 ? `，失败 ${failed}` : ''}`)
     loadProfiles()
   }
@@ -350,7 +403,7 @@ export function BrowserListPage() {
       ? Array.from(selectedIds)
       : deleteConfirm.profileId ? [deleteConfirm.profileId] : []
     if (ids.length === 0) return
-    setBatchLoading(true)
+    setBatchOperation('delete')
     try {
       for (const id of ids) {
         await deleteBrowserProfile(id)
@@ -366,7 +419,7 @@ export function BrowserListPage() {
     } catch (error: any) {
       toast.error(error?.message || '删除失败')
     } finally {
-      setBatchLoading(false)
+      setBatchOperation(null)
     }
   }
 
@@ -399,8 +452,6 @@ export function BrowserListPage() {
         proxyConfig: '',
         launchArgs: profile.launchArgs,
         tags: profile.tags,
-        keywords: profile.keywords || [],
-        groupId: profile.groupId || '',
       })
       mergeProfileState(updated || { ...profile, proxyId: proxy.proxyId, proxyConfig: '' })
       toast.success('代理已切换')
@@ -419,6 +470,7 @@ export function BrowserListPage() {
   }
 
   const proxyErrorCount = proxies.filter(proxy => proxy.lastTestedAt && proxy.lastTestOk === false).length
+  const selectedRunningCount = profiles.filter(profile => selectedIds.has(profile.profileId) && profile.running).length
 
   return (
     <div className="h-full overflow-auto pb-5 animate-fade-in">
@@ -431,7 +483,6 @@ export function BrowserListPage() {
           viewMode={viewMode}
           proxies={proxies}
           cores={cores}
-          groups={groups}
           allTags={allTags}
           filters={filters}
           onFiltersChange={setFilters}
@@ -445,15 +496,20 @@ export function BrowserListPage() {
         {/* 批量操作工具栏 */}
         <BatchToolbar
           selectedCount={selectedIds.size}
+          selectedRunningCount={selectedRunningCount}
           totalCount={filteredProfiles.length}
           onSelectAll={handleSelectAll}
           onDeselectAll={handleDeselectAll}
           onBatchStart={handleBatchStart}
+          onRetileRunning={handleRetileRunning}
           onBatchStop={handleBatchStop}
           onBatchExport={handleBatchExport}
           onOpenBackup={() => setBackupModalOpen(true)}
           onBatchDelete={openBatchDeleteConfirm}
-          batchLoading={batchLoading}
+          batchBusy={batchLoading}
+          batchStarting={batchStarting}
+          batchStopping={batchStopping}
+          retileLoading={retileLoading}
           exporting={profilePackageBusy}
         />
 
@@ -490,7 +546,6 @@ export function BrowserListPage() {
         onStop={(profileId) => { void handleStop(profileId) }}
         onFocus={(profileId) => { void handleFocus(profileId) }}
         onRestart={(profileId) => { void handleRestart(profileId) }}
-        onOpenKeywords={openKwModal}
         onOpenExtensions={openExtensionModal}
         onExport={(profile) => { void handleExportProfile(profile) }}
         onOpenCopy={openCopyModal}
@@ -532,13 +587,6 @@ export function BrowserListPage() {
           }
         }}
         startingDirect={pendingStartId ? startingIds.has(pendingStartId) : false}
-        kwModal={kwModal}
-        onCloseKeywords={closeKwModal}
-        onKeywordsSaved={(keywords) => {
-          updateProfilesState(prev => prev.map(p =>
-            p.profileId === kwModal.profile!.profileId ? { ...p, keywords } : p
-          ))
-        }}
         copyModal={copyModal}
         copyName={copyName}
         copyOptions={copyOptions}

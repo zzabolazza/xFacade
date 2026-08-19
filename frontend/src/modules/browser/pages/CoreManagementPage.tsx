@@ -176,7 +176,7 @@ export function CoreManagementPage() {
       title: '状态',
       width: '90px',
       render: (val) => (
-        <Badge variant={val ? 'success' : 'error'} dot>
+        <Badge variant={val ? 'success' : 'error'}>
           {val ? '有效' : '无效'}
         </Badge>
       ),

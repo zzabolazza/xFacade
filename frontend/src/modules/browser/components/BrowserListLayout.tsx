@@ -4,7 +4,7 @@ import { Download, LayoutGrid, List, Play, RefreshCw, Upload } from 'lucide-reac
 
 import { Button } from '../../../shared/components'
 
-import type { BrowserCore, BrowserGroupWithCount, BrowserProxy } from '../types'
+import type { BrowserCore, BrowserProxy } from '../types'
 import { InstanceFilterBar } from './InstanceFilterBar'
 import type { InstanceFilters } from './InstanceFilterBar'
 
@@ -18,7 +18,6 @@ interface BrowserListHeaderProps {
   viewMode: BrowserViewMode
   proxies: BrowserProxy[]
   cores: BrowserCore[]
-  groups: BrowserGroupWithCount[]
   allTags: string[]
   filters: InstanceFilters
   onFiltersChange: (next: InstanceFilters) => void
@@ -37,7 +36,6 @@ export function BrowserListHeader({
   viewMode,
   proxies,
   cores,
-  groups,
   allTags,
   filters,
   onFiltersChange,
@@ -60,7 +58,7 @@ export function BrowserListHeader({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="max-w-2xl text-[12.5px] leading-5 text-[var(--color-text-muted)]">
-            管理全部浏览器配置与实例：启动、停止、代理切换、标签分组、批量操作。
+            管理全部浏览器配置与实例：启动、停止、代理切换、标签、批量操作。
           </p>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
@@ -110,7 +108,6 @@ export function BrowserListHeader({
             proxies={proxies}
             cores={cores}
             allTags={allTags}
-            groups={groups}
           />
           <div className="ml-auto flex items-center gap-2">
             {filteredProfileCount !== profileCount && (

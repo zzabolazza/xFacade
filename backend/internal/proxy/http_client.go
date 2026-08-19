@@ -32,7 +32,6 @@ func buildProxyHTTPClient(
 	src = strings.TrimSpace(resolveProxyConfig(src, proxies, proxyId))
 	log := logger.New("ProxyHTTPClient")
 	if src == "" || strings.EqualFold(src, "direct://") {
-		log.Info("使用直连 HTTP 客户端", logger.F("proxy_id", proxyId))
 		return &http.Client{Timeout: timeout}, nil
 	}
 
@@ -42,10 +41,6 @@ func buildProxyHTTPClient(
 		return nil, err
 	}
 	protocol := DetectProxyProtocol(normalized)
-	log.Info("代理 HTTP 客户端",
-		logger.F("proxy_id", proxyId),
-		logger.F("protocol", protocol),
-	)
 
 	parsed, err := url.Parse(normalized)
 	if err != nil {

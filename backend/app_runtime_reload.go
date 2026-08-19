@@ -32,8 +32,6 @@ func (a *App) ReloadConfig() error {
 			Header:  cfg.LaunchServer.Auth.Header,
 		})
 	}
-
-	log.Info("前端触发配置重载成功")
 	return nil
 }
 

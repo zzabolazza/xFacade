@@ -1,6 +1,19 @@
 import type { BrowserProfile, BrowserTab } from '../types'
 import { getBindings, getMockProfiles, nowISOString, setMockProfiles } from './runtime'
 
+export interface StartBrowserInstanceOptions {
+  extraLaunchArgs?: string[]
+  startURLs?: string[]
+  skipDefaultStartURLs?: boolean
+}
+
+export interface BrowserWindowBounds {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
 export async function startBrowserInstance(profileId: string): Promise<BrowserProfile | null> {
   const bindings: any = await getBindings()
   if (bindings?.BrowserInstanceStart) {
@@ -24,12 +37,46 @@ export async function startBrowserInstance(profileId: string): Promise<BrowserPr
   return nextProfiles.find((item) => item.profileId === profileId) || null
 }
 
+export async function startBrowserInstanceWithParams(
+  profileId: string,
+  options: StartBrowserInstanceOptions = {},
+): Promise<BrowserProfile | null> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserInstanceStartWithParams) {
+    return (await bindings.BrowserInstanceStartWithParams(
+      profileId,
+      options.extraLaunchArgs || [],
+      options.startURLs || [],
+      options.skipDefaultStartURLs === true,
+    )) || null
+  }
+
+  return startBrowserInstance(profileId)
+}
+
 export async function startBrowserInstanceDirect(profileId: string): Promise<BrowserProfile | null> {
   const bindings: any = await getBindings()
   if (bindings?.BrowserInstanceStartDirect) {
     return (await bindings.BrowserInstanceStartDirect(profileId)) || null
   }
   return startBrowserInstance(profileId)
+}
+
+export async function startBrowserInstanceDirectWithParams(
+  profileId: string,
+  options: StartBrowserInstanceOptions = {},
+): Promise<BrowserProfile | null> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserInstanceStartDirectWithParams) {
+    return (await bindings.BrowserInstanceStartDirectWithParams(
+      profileId,
+      options.extraLaunchArgs || [],
+      options.startURLs || [],
+      options.skipDefaultStartURLs === true,
+    )) || null
+  }
+
+  return startBrowserInstanceDirect(profileId)
 }
 
 export async function startBrowserInstanceByCode(code: string): Promise<BrowserProfile | null> {
@@ -87,6 +134,17 @@ export async function focusBrowserInstance(profileId: string): Promise<BrowserIn
     }
   }
   return { raised: true, flashed: true }
+}
+
+export async function setBrowserInstanceWindowBounds(
+  profileId: string,
+  bounds: BrowserWindowBounds,
+): Promise<BrowserProfile | null> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserInstanceSetWindowBounds) {
+    return (await bindings.BrowserInstanceSetWindowBounds(profileId, bounds)) || null
+  }
+  return getMockProfiles().find((item) => item.profileId === profileId) || null
 }
 
 export async function openBrowserUrl(profileId: string, targetUrl: string): Promise<boolean> {

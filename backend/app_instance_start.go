@@ -13,6 +13,12 @@ func (a *App) BrowserInstanceStartDirect(profileId string) (*BrowserProfile, err
 	return a.browserInstanceStartInternal(profileId, nil, nil, false, false, true, "", "")
 }
 
+// BrowserInstanceStartDirectWithParams 通过额外参数直连启动实例（仅本次启动生效，不落库）
+func (a *App) BrowserInstanceStartDirectWithParams(profileId string, extraLaunchArgs []string, startURLs []string, skipDefaultStartURLs bool) (*BrowserProfile, error) {
+	preferVisibleWindow := shouldPreferVisibleWindowForStartWithParams(startURLs)
+	return a.browserInstanceStartInternal(profileId, extraLaunchArgs, startURLs, skipDefaultStartURLs, preferVisibleWindow, true, "", "")
+}
+
 // BrowserInstanceStartWithParams 通过额外参数启动实例（仅本次启动生效，不落库）
 func (a *App) BrowserInstanceStartWithParams(profileId string, extraLaunchArgs []string, startURLs []string, skipDefaultStartURLs bool) (*BrowserProfile, error) {
 	preferVisibleWindow := shouldPreferVisibleWindowForStartWithParams(startURLs)

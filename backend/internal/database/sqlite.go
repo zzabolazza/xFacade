@@ -232,6 +232,17 @@ var migrations = []migration{
 			`ALTER TABLE browser_profiles DROP COLUMN deleted_at`,
 		},
 	},
+	{
+		version: 15,
+		desc:    "添加独立标签表",
+		stmts: []string{
+			`CREATE TABLE IF NOT EXISTS browser_tags (
+				tag_name   TEXT PRIMARY KEY,
+				created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+		},
+	},
 	// ── 新版本在此追加，格式：
 	// {
 	//     version: 4,

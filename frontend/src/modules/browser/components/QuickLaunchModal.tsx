@@ -10,11 +10,10 @@ interface QuickLaunchModalProps {
   onClose: () => void
 }
 
-import { buildSearchText, GROUP_ALL, GROUP_UNGROUPED, normalizeCode, normalizeText, pickPrimaryTag, UNTAGGED_LABEL, type GroupFilterOption, type ProfileTagSection } from './QuickLaunchModal.helpers'
+import { buildSearchText, normalizeCode, normalizeText, pickPrimaryTag, UNTAGGED_LABEL, type ProfileTagSection } from './QuickLaunchModal.helpers'
 import { useQuickLaunchData } from './useQuickLaunchData'
 export function QuickLaunchModal({ open, onClose }: QuickLaunchModalProps) {
   const [query, setQuery] = useState('')
-  const [groupFilter, setGroupFilter] = useState(GROUP_ALL)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [startingCode, setStartingCode] = useState('')
   const [activeTag, setActiveTag] = useState('')
@@ -26,75 +25,22 @@ export function QuickLaunchModal({ open, onClose }: QuickLaunchModalProps) {
   const autoScrollTimerRef = useRef<number | null>(null)
 
 
-  const { profiles, groups, loading } = useQuickLaunchData(open, inputRef)
+  const { profiles, loading } = useQuickLaunchData(open, inputRef)
 
   useEffect(() => {
     if (!open) return
     setQuery('')
-    setGroupFilter(GROUP_ALL)
     setSelectedIndex(0)
     return () => {
       setStartingCode('')
       setActiveTag('')
     }
   }, [open])
-  const groupNameMap = useMemo(() => {
-    const map = new Map<string, string>()
-    groups.forEach((group) => {
-      map.set(group.groupId, group.groupName)
-    })
-    return map
-  }, [groups])
-
-  const groupOptions = useMemo<GroupFilterOption[]>(() => {
-    const countMap = new Map<string, number>()
-    profiles.forEach((profile) => {
-      const key = (profile.groupId || '').trim() || GROUP_UNGROUPED
-      countMap.set(key, (countMap.get(key) || 0) + 1)
-    })
-
-    const options: GroupFilterOption[] = groups.map((group) => ({
-      id: group.groupId,
-      name: group.groupName,
-      count: countMap.get(group.groupId) || 0,
-    }))
-
-    for (const [key, count] of countMap.entries()) {
-      if (key === GROUP_UNGROUPED) continue
-      if (!options.some((item) => item.id === key)) {
-        options.push({ id: key, name: groupNameMap.get(key) || `分组 ${key}`, count })
-      }
-    }
-
-    options.push({
-      id: GROUP_UNGROUPED,
-      name: '未分组',
-      count: countMap.get(GROUP_UNGROUPED) || 0,
-    })
-
-    return options
-  }, [profiles, groups, groupNameMap])
-
-  useEffect(() => {
-    if (groupFilter === GROUP_ALL) return
-    if (!groupOptions.some((item) => item.id === groupFilter)) {
-      setGroupFilter(GROUP_ALL)
-    }
-  }, [groupFilter, groupOptions])
-
-  const groupFilteredProfiles = useMemo(() => {
-    if (groupFilter === GROUP_ALL) return profiles
-    if (groupFilter === GROUP_UNGROUPED) {
-      return profiles.filter((profile) => !(profile.groupId || '').trim())
-    }
-    return profiles.filter((profile) => (profile.groupId || '').trim() === groupFilter)
-  }, [profiles, groupFilter])
-
   const filteredProfiles = useMemo(() => {
     const q = normalizeText(query)
-    if (!q) return groupFilteredProfiles
-    return groupFilteredProfiles.filter((item) => buildSearchText(item).includes(q))
-  }, [groupFilteredProfiles, query])
+    if (!q) return profiles
+    return profiles.filter((item) => buildSearchText(item).includes(q))
+  }, [profiles, query])
 
   useEffect(() => {
     if (filteredProfiles.length === 0) {
@@ -294,64 +240,24 @@ export function QuickLaunchModal({ open, onClose }: QuickLaunchModalProps) {
   return (
     <Modal open={open} onClose={onClose} title="快速启动浏览器" width="1120px">
       <div className="space-y-4" onKeyDown={onPanelKeyDown}>
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(300px,420px)_1fr] lg:items-center">
-          <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border-default)] px-3 bg-[var(--color-bg-surface)]">
-            <Search className="w-4 h-4 text-[var(--color-text-muted)]" />
-            <input
-              ref={inputRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="输入 Code 或实例名 / 标签 / 关键字"
-              className="h-9 w-full border-0 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] focus:outline-none px-0"
-            />
-            <Button
-              size="sm"
-              className="shrink-0 whitespace-nowrap px-2.5"
-              loading={!!startingCode}
-              onClick={() => void startByCode(query)}
-              disabled={!query.trim()}
-            >
-              按Code启动
-            </Button>
-          </div>
-
-          <div className="min-w-0 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-3 py-2">
-            <div className="flex items-center gap-2 overflow-x-auto">
-              <button
-                type="button"
-                onClick={() => {
-                  setGroupFilter(GROUP_ALL)
-                  setSelectedIndex(0)
-                }}
-                className={[
-                  'shrink-0 px-3 py-1.5 rounded-md text-xs transition-colors',
-                  groupFilter === GROUP_ALL
-                    ? 'bg-[var(--color-accent)] text-[var(--color-text-inverse)]'
-                    : 'text-[var(--color-text-secondary)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-text-primary)]',
-                ].join(' ')}
-              >
-                全部分组（{profiles.length}）
-              </button>
-              {groupOptions.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => {
-                    setGroupFilter(option.id)
-                    setSelectedIndex(0)
-                  }}
-                  className={[
-                    'shrink-0 px-3 py-1.5 rounded-md text-xs transition-colors',
-                    groupFilter === option.id
-                      ? 'bg-[var(--color-accent)] text-[var(--color-text-inverse)]'
-                      : 'text-[var(--color-text-secondary)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-text-primary)]',
-                  ].join(' ')}
-                >
-                  {option.name}（{option.count}）
-                </button>
-              ))}
-            </div>
-          </div>
+        <div className="flex max-w-[520px] items-center gap-2 rounded-lg border border-[var(--color-border-default)] px-3 bg-[var(--color-bg-surface)]">
+          <Search className="w-4 h-4 text-[var(--color-text-muted)]" />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="输入 Code 或实例名 / 标签"
+            className="h-9 w-full border-0 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] focus:outline-none px-0"
+          />
+          <Button
+            size="sm"
+            className="shrink-0 whitespace-nowrap px-2.5"
+            loading={!!startingCode}
+            onClick={() => void startByCode(query)}
+            disabled={!query.trim()}
+          >
+            按Code启动
+          </Button>
         </div>
 
         <div className="rounded-lg border border-[var(--color-border-default)] overflow-hidden">

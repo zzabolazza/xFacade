@@ -63,13 +63,6 @@ func lightHTTPDelayTest(
 		return TestResult{ProxyId: proxyId, Ok: false, Engine: engine, Error: "测速目标 URL 为空"}
 	}
 
-	log.Info("开始代理测速",
-		logger.F("proxy_id", proxyId),
-		logger.F("engine", engine),
-		logger.F("timeout_ms", cfg.Timeout.Milliseconds()),
-		logger.F("targets", strings.Join(testURLs, ",")),
-	)
-
 	client, err := buildSpeedTestHTTPClient(src, proxyId, proxies, cfg)
 	if err != nil {
 		log.Warn("代理测速 HTTP 客户端创建失败",
@@ -96,13 +89,6 @@ func lightHTTPDelayTest(
 			continue
 		}
 		if speedTestStatusOK(statusCode, cfg) {
-			log.Info("代理测速成功",
-				logger.F("proxy_id", proxyId),
-				logger.F("engine", engine),
-				logger.F("url", testURL),
-				logger.F("status", statusCode),
-				logger.F("latency_ms", latency),
-			)
 			return TestResult{ProxyId: proxyId, Ok: true, LatencyMs: latency, Engine: engine}
 		}
 		lastErr = fmt.Errorf("HTTP %d", statusCode)

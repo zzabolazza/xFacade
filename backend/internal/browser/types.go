@@ -145,6 +145,7 @@ type Manager struct {
 	CoreDAO      CoreDAO
 	BookmarkDAO  BookmarkDAO
 	GroupDAO     GroupDAO
+	TagDAO       TagDAO
 	ExtensionDAO ExtensionDAO
 }
 

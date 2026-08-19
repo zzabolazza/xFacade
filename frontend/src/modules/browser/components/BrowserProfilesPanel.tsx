@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
-import { Copy, Download, Focus, Key, Loader2, MoreHorizontal, Play, Puzzle, Repeat2, RotateCcw, Settings, Square, Trash2, Wifi } from 'lucide-react'
+import { Copy, Download, Focus, Loader2, MoreHorizontal, Play, Puzzle, Repeat2, RotateCcw, Settings, Square, Trash2, Wifi } from 'lucide-react'
 
 import { Badge, Button, Table } from '../../../shared/components'
 import type { TableColumn } from '../../../shared/components/Table'
@@ -11,7 +11,7 @@ import { browserProxyTestSpeed, testProxyConnectivity } from '../api'
 import { readIPHealthCache } from '../pages/proxyPool/storage'
 import { resolveProfileProxyCountryDisplay } from '../utils/countryFlag'
 import type { BrowserViewMode } from './BrowserListLayout'
-import { CdpUrlCell, KeywordInlineRow, LaunchCodeCell } from './BrowserListWidgets'
+import { CdpUrlCell, LaunchCodeCell, TagInlineRow } from './BrowserListWidgets'
 import { CountryFlagIcon } from './CountryFlagIcon'
 
 type ProfileStatusVariant = 'default' | 'success' | 'error' | 'warning' | 'info'
@@ -41,7 +41,6 @@ interface BrowserProfilesPanelProps {
   onStop: (profileId: string) => void
   onFocus: (profileId: string) => void
   onRestart: (profileId: string) => void
-  onOpenKeywords: (profile: BrowserProfile) => void
   onOpenExtensions: (profile: BrowserProfile) => void
   onExport: (profile: BrowserProfile) => void
   onOpenCopy: (profile: BrowserProfile) => void
@@ -165,7 +164,6 @@ function ProfileMoreActions({
   onToggle,
   onClose,
   onRestart,
-  onOpenKeywords,
   onOpenExtensions,
   onExport,
 }: {
@@ -174,7 +172,6 @@ function ProfileMoreActions({
   onToggle: () => void
   onClose: () => void
   onRestart: () => void
-  onOpenKeywords: () => void
   onOpenExtensions: () => void
   onExport: () => void
 }) {
@@ -188,7 +185,7 @@ function ProfileMoreActions({
       const rect = triggerRef.current?.getBoundingClientRect()
       if (!rect) return
       const menuWidth = 128
-      const menuHeight = 168
+      const menuHeight = 126
       const gap = 8
       const left = Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8))
       const belowTop = rect.bottom + gap
@@ -245,14 +242,6 @@ function ProfileMoreActions({
           >
             <RotateCcw className="w-3.5 h-3.5" />
             重启
-          </button>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text-primary)]"
-            onClick={() => runAndClose(onOpenKeywords)}
-          >
-            <Key className="w-3.5 h-3.5" />
-            关键字
           </button>
           <button
             type="button"
@@ -333,7 +322,6 @@ function BrowserProfileCard({
   onStop,
   onFocus,
   onRestart,
-  onOpenKeywords,
   onOpenExtensions,
   onOpenCopy,
   onOpenProxyPicker,
@@ -354,7 +342,6 @@ function BrowserProfileCard({
   onStop: (profileId: string) => void
   onFocus: (profileId: string) => void
   onRestart: (profileId: string) => void
-  onOpenKeywords: (profile: BrowserProfile) => void
   onOpenExtensions: (profile: BrowserProfile) => void
   onOpenCopy: (profile: BrowserProfile) => void
   onOpenProxyPicker: (profile: BrowserProfile) => void
@@ -378,14 +365,9 @@ function BrowserProfileCard({
             <Link className="max-w-[200px] truncate text-sm font-semibold text-[var(--color-text-primary)] transition-colors hover:text-[var(--color-accent)] hover:underline" to={`/browser/detail/${profile.profileId}`}>
               {profile.profileName}
             </Link>
-            {profile.tags && profile.tags.length > 0 && (
-              <div className="flex gap-1 ml-1">
-                {profile.tags.map(tag => <Badge variant="default" key={tag}>{tag}</Badge>)}
-              </div>
-            )}
           </div>
 
-          <Badge variant={status.variant} dot dotClassName="w-2 h-2 shrink-0">
+          <Badge variant={status.variant} className="whitespace-nowrap">
             {status.label}
           </Badge>
         </div>
@@ -416,7 +398,6 @@ function BrowserProfileCard({
           )}
           <span className="w-px h-4 bg-[var(--color-border-muted)] mx-1"></span>
           <Button size="sm" variant="ghost" onClick={() => onRestart(profile.profileId)} title="重启" disabled={isBusy}><RotateCcw className="h-3.5 w-3.5 shrink-0" />重启</Button>
-          <Button size="sm" variant="ghost" onClick={() => onOpenKeywords(profile)} title="关键字管理" disabled={isBusy}><Key className="h-3.5 w-3.5 shrink-0" />关键字</Button>
           <Button size="sm" variant="ghost" onClick={() => onOpenExtensions(profile)} title="插件配置" disabled={isBusy}><Puzzle className="h-3.5 w-3.5 shrink-0" />插件</Button>
           <EditProfileAction profileId={profile.profileId} disabled={isBusy} />
           <Button size="sm" variant="ghost" onClick={() => onOpenCopy(profile)} title="克隆" disabled={isBusy}><Copy className="h-3.5 w-3.5 shrink-0" />克隆</Button>
@@ -455,9 +436,9 @@ function BrowserProfileCard({
       </div>
 
       <div className="border-t border-[var(--color-border-muted)] pt-2 flex items-start gap-2 flex-1 min-h-0">
-        <span className="text-xs font-medium text-[var(--color-text-primary)] shrink-0 pt-0.5">系统关键字</span>
+        <span className="text-xs font-medium text-[var(--color-text-primary)] shrink-0 pt-0.5">标签</span>
         <div className="flex-1 min-h-0 overflow-y-auto pr-1">
-          <KeywordInlineRow keywords={profile.keywords || []} />
+          <TagInlineRow tags={profile.tags || []} />
         </div>
       </div>
     </div>
@@ -484,7 +465,6 @@ export function BrowserProfilesPanel({
   onStop,
   onFocus,
   onRestart,
-  onOpenKeywords,
   onOpenExtensions,
   onExport,
   onOpenCopy,
@@ -545,21 +525,16 @@ export function BrowserProfilesPanel({
           <Link className="block truncate whitespace-nowrap text-sm font-semibold text-[var(--color-text-primary)] transition-colors hover:text-[var(--color-accent)] hover:underline" to={`/browser/detail/${record.profileId}`} title={String(value || '')}>
             {value}
           </Link>
-          {record.tags && record.tags.length > 0 && (
-            <div className="flex gap-1 flex-wrap">
-              {record.tags.map(tag => <Badge variant="default" key={tag}>{tag}</Badge>)}
-            </div>
-          )}
         </div>
       ),
     },
     {
       key: 'running',
       title: '状态',
-      width: 100,
+      width: 128,
       render: (_, record) => {
         const status = getProfileStatus(record)
-        return <Badge variant={status.variant} dot>{status.label}</Badge>
+        return <Badge variant={status.variant} className="whitespace-nowrap">{status.label}</Badge>
       },
     },
     {
@@ -598,10 +573,10 @@ export function BrowserProfilesPanel({
       render: (_, record) => <CdpUrlCell debugReady={record.debugReady} debugPort={record.debugPort} />,
     },
     {
-      key: 'keywords',
-      title: '关键字',
+      key: 'tags',
+      title: '标签',
       width: 200,
-      render: (value) => <KeywordInlineRow keywords={value || []} />,
+      render: (value) => <TagInlineRow tags={value || []} />,
     },
     {
       key: 'updatedAt',
@@ -650,7 +625,6 @@ export function BrowserProfilesPanel({
               onToggle={() => setOpenMoreProfileId(isMoreOpen ? null : record.profileId)}
               onClose={() => setOpenMoreProfileId(null)}
               onRestart={() => onRestart(record.profileId)}
-              onOpenKeywords={() => onOpenKeywords(record)}
               onOpenExtensions={() => onOpenExtensions(record)}
               onExport={() => onExport(record)}
             />
@@ -696,7 +670,6 @@ export function BrowserProfilesPanel({
                     onStop={onStop}
                     onFocus={onFocus}
                     onRestart={onRestart}
-                    onOpenKeywords={onOpenKeywords}
                     onOpenExtensions={onOpenExtensions}
                     onOpenCopy={onOpenCopy}
                     onOpenProxyPicker={onOpenProxyPicker}

@@ -42,7 +42,6 @@ let mockProfiles: BrowserProfile[] = [
     proxyConfig: '',
     launchArgs: ['--disable-features=Translate'],
     tags: ['默认'],
-    keywords: [],
     running: false,
     debugPort: 0,
     debugReady: false,

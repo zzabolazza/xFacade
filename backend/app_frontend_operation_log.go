@@ -4,6 +4,9 @@ import "facade/backend/internal/logger"
 
 // FrontendOperationLog records frontend-triggered Wails operation results into the app log.
 func (a *App) FrontendOperationLog(level string, method string, success bool, durationMs int64, message string) {
+	if success && level != "error" && level != "ERROR" {
+		return
+	}
 	log := logger.New("Frontend")
 	fields := []logger.Field{
 		logger.F("method", method),
@@ -15,7 +18,5 @@ func (a *App) FrontendOperationLog(level string, method string, success bool, du
 	}
 	if !success || level == "error" || level == "ERROR" {
 		log.Error("前端操作失败", fields...)
-		return
 	}
-	log.Info("前端操作完成", fields...)
 }

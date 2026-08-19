@@ -5,15 +5,7 @@ export interface ProfileTagSection {
   items: BrowserProfile[]
 }
 
-export interface GroupFilterOption {
-  id: string
-  name: string
-  count: number
-}
-
 export const UNTAGGED_LABEL = '未打标签'
-export const GROUP_ALL = '__all__'
-export const GROUP_UNGROUPED = '__ungrouped__'
 
 export function normalizeText(v?: string): string {
   return (v || '').trim().toLowerCase()
@@ -28,7 +20,6 @@ export function buildSearchText(profile: BrowserProfile): string {
     profile.profileName,
     profile.launchCode || '',
     ...(profile.tags || []),
-    ...(profile.keywords || []),
   ]
     .join(' ')
     .toLowerCase()

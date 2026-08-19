@@ -107,7 +107,7 @@ var (
 // DefaultLoggerConfig 返回默认日志配置
 func DefaultLoggerConfig() LoggerConfig {
 	return LoggerConfig{
-		Level:           "info",
+		Level:           "debug",
 		FileEnabled:     false,
 		FilePath:        "data/logs/app.log",
 		Format:          "text",

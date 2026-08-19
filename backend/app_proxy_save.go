@@ -23,7 +23,6 @@ func (a *App) SaveBrowserProxies(proxies []BrowserProxy) error {
 				return err
 			}
 		}
-		log.Info("代理列表已保存到数据库", logger.F("count", len(normalized)))
 		a.reconcileProfileProxyBindings()
 		return nil
 	}

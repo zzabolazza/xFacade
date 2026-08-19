@@ -6,12 +6,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func (a *App) startBrowserProfileWithPlan(input browserStartInput, plan *browserStartPlan) (*BrowserProfile, error) {
 	log := logger.New("Browser")
 	profile := plan.profile
 	a.clearDeferredStartTargets(input.ProfileID)
+	startedAt := time.Now()
 
 	cmd := exec.Command(plan.chromeBinaryPath, plan.args...)
 	cmd.Dir = filepath.Dir(plan.chromeBinaryPath)
@@ -63,12 +65,18 @@ func (a *App) startBrowserProfileWithPlan(input browserStartInput, plan *browser
 
 			log.Info("实例启动",
 				logger.F("profile_id", input.ProfileID),
+				logger.F("profile_name", profile.ProfileName),
 				logger.F("debug_port", stableDebugPort),
 				logger.F("pid", profile.Pid),
-				logger.F("proxy", plan.effectiveProxy),
+				logger.F("proxy_mode", browserStartProxyMode(plan.effectiveProxy)),
+				logger.F("extension_count", plan.extensionCount),
 				logger.F("runtime_warning", profile.RuntimeWarning),
 				logger.F("attempt", attempt),
-				logger.F("max_attempts", plan.maxStartAttempts),
+				logger.F("duration_ms", time.Since(startedAt).Milliseconds()),
+			)
+			log.Debug("实例启动参数",
+				logger.F("profile_id", input.ProfileID),
+				logger.F("profile_name", profile.ProfileName),
 				logger.F("args", strings.Join(plan.args, " ")),
 			)
 			a.emitBrowserInstanceStarted(profile, false)
@@ -143,4 +151,12 @@ func (a *App) startBrowserProfileWithPlan(input browserStartInput, plan *browser
 	startErr := fmt.Errorf("实例启动失败：浏览器在等待窗口内仍未就绪")
 	profile.LastError = startErr.Error()
 	return profile, startErr
+}
+
+func browserStartProxyMode(effectiveProxy string) string {
+	value := strings.TrimSpace(effectiveProxy)
+	if value == "" || strings.EqualFold(value, "direct://") {
+		return "direct"
+	}
+	return "proxy"
 }

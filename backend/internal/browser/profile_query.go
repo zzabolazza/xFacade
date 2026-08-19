@@ -1,14 +1,12 @@
 package browser
 
 import (
-	"facade/backend/internal/logger"
 	"sort"
 	"strings"
 )
 
 // List 获取配置列表
 func (m *Manager) List() []Profile {
-	log := logger.New("Browser")
 	m.InitData()
 	m.Mutex.Lock()
 	defer m.Mutex.Unlock()
@@ -25,7 +23,6 @@ func (m *Manager) List() []Profile {
 	sort.Slice(list, func(i, j int) bool {
 		return list[i].ProfileId < list[j].ProfileId
 	})
-	log.Info("浏览器配置列表查询", logger.F("count", len(list)))
 	return list
 }
 
@@ -51,19 +48,33 @@ func (m *Manager) ListByTag(tag string) []Profile {
 // GetAllTags 获取所有已使用的标签（去重排序）
 func (m *Manager) GetAllTags() []string {
 	m.InitData()
+	seen := make(map[string]string)
+	if m.TagDAO != nil {
+		if tags, err := m.TagDAO.List(); err == nil {
+			for _, t := range tags {
+				t = strings.TrimSpace(t)
+				if t != "" {
+					seen[strings.ToLower(t)] = t
+				}
+			}
+		}
+	}
+
 	m.Mutex.Lock()
 	defer m.Mutex.Unlock()
-	seen := make(map[string]struct{})
 	for _, p := range m.Profiles {
 		for _, t := range p.Tags {
 			t = strings.TrimSpace(t)
 			if t != "" {
-				seen[t] = struct{}{}
+				key := strings.ToLower(t)
+				if _, ok := seen[key]; !ok {
+					seen[key] = t
+				}
 			}
 		}
 	}
 	tags := make([]string, 0, len(seen))
-	for t := range seen {
+	for _, t := range seen {
 		tags = append(tags, t)
 	}
 	sort.Strings(tags)

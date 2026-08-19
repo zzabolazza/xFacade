@@ -1,0 +1,48 @@
+<h2>首版同步行为</h2>
+<p class="subtitle">主控操作 → 从窗口复现。请确认这组范围是否合适。</p>
+
+<div class="section">
+  <div class="label">会同步</div>
+  <div class="options" data-multiselect>
+    <div class="option" data-choice="click" style="pointer-events:none;opacity:1;border-color:var(--accent)">
+      <div class="letter">✓</div>
+      <div class="content"><h3>点击</h3><p>按页面元素定位后回放；页面结构需基本一致。</p></div>
+    </div>
+    <div class="option" data-choice="typing" style="pointer-events:none;opacity:1;border-color:var(--accent)">
+      <div class="letter">✓</div>
+      <div class="content"><h3>文本输入与按键</h3><p>页面内输入框、回车、常见快捷键。</p></div>
+    </div>
+    <div class="option" data-choice="scroll" style="pointer-events:none;opacity:1;border-color:var(--accent)">
+      <div class="letter">✓</div>
+      <div class="content"><h3>滚动</h3><p>页面与可滚动容器按比例同步。</p></div>
+    </div>
+    <div class="option" data-choice="nav" style="pointer-events:none;opacity:1;border-color:var(--accent)">
+      <div class="letter">✓</div>
+      <div class="content"><h3>地址栏导航结果</h3><p>输入网址回车后跳转同一 URL；含前进 / 后退 / 刷新。</p></div>
+    </div>
+    <div class="option" data-choice="tabs" style="pointer-events:none;opacity:1;border-color:var(--accent)">
+      <div class="letter">✓</div>
+      <div class="content"><h3>标签页</h3><p>新建、关闭、切换活动标签。</p></div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">首版不做</div>
+  <ul>
+    <li>地址栏逐字镜像、浏览器菜单、扩展弹窗、系统文件选择器</li>
+    <li>拖拽上传、复杂 IME 组合输入细节</li>
+    <li>跨设备 / 跨机器群控</li>
+  </ul>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="sync-scope-ok" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>范围正确</h3><p>继续下一节：会话流程与异常暂停。</p></div>
+  </div>
+  <div class="option" data-choice="sync-scope-adjust" onclick="toggleSelect(this)">
+    <div class="letter">?</div>
+    <div class="content"><h3>需要调整</h3><p>选择后在终端说明要加 / 要删的项。</p></div>
+  </div>
+</div>

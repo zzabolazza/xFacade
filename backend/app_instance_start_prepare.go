@@ -28,6 +28,7 @@ type browserStartPlan struct {
 	userDataDir          string
 	args                 []string
 	extensionDirs        []string
+	extensionCount       int
 	deferredStartTargets []string
 	effectiveProxy       string
 	assignedDebugPort    int
@@ -123,6 +124,7 @@ func (a *App) prepareBrowserStartPlan(input browserStartInput, profile *BrowserP
 	totalReadyTimeout := time.Duration(maxStartAttempts) * startReadyTimeout
 	restoreLastSession := browserRestoreLastSession(a.config)
 	extensionDirs := a.browserMgr.EnabledExtensionDirsForProfile(input.ProfileID)
+	extensionCount := len(normalizeNonEmptyStrings(extensionDirs))
 	a.ensureProfileLaunchCode(profile)
 	var privacyVoices []browser.SpeechVoice
 	if browserPrivacySpoofSpeechVoicesEnabled(a.config) {
@@ -176,6 +178,7 @@ func (a *App) prepareBrowserStartPlan(input browserStartInput, profile *BrowserP
 		chromeBinaryPath:     chromeBinaryPath,
 		userDataDir:          userDataDir,
 		extensionDirs:        extensionDirs,
+		extensionCount:       extensionCount,
 		args:                 buildBrowserLaunchArgsWithPrivacy(profile, userDataDir, assignedDebugPort, effectiveProxy, extensionDirs, sanitizedProfileLaunchArgs, sanitizedExtraLaunchArgs, launchTargets, a.config),
 		deferredStartTargets: deferredStartTargets,
 		effectiveProxy:       effectiveProxy,

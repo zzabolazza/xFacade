@@ -36,6 +36,7 @@ func (m *Manager) deleteProfilePermanentlyLocked(log *logger.Logger, profileId s
 	if err := m.deleteProfileRelatedDataLocked(log, profile); err != nil {
 		return err
 	}
+	profileName := profile.ProfileName
 
 	if m.ProfileDAO != nil {
 		if err := m.ProfileDAO.Delete(profileId); err != nil {
@@ -49,7 +50,7 @@ func (m *Manager) deleteProfilePermanentlyLocked(log *logger.Logger, profileId s
 	}
 
 	delete(m.Profiles, profileId)
-	log.Info("浏览器配置已删除", logger.F("profile_id", profileId))
+	log.Info("浏览器配置已删除", logger.F("profile_id", profileId), logger.F("profile_name", profileName))
 	return nil
 }
 

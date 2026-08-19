@@ -1,0 +1,59 @@
+<h2>群控入口和运行控制放在哪里？</h2>
+<p class="subtitle">三种方案都支持从实例列表选择 2–10 个浏览器，并指定一个主控实例。</p>
+
+<div class="cards">
+  <div class="card" data-choice="list-toolbar" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px">
+      <div class="mock-nav">浏览器实例　代理　内核</div>
+      <div style="padding:10px;border:1px solid var(--border);margin-top:8px">
+        <strong>已选择 6 项</strong>
+        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+          <button class="mock-button">开始群控</button>
+          <button class="mock-button">均匀平铺</button>
+          <button class="mock-button">启动</button>
+        </div>
+      </div>
+      <div class="placeholder" style="height:90px;margin-top:8px">实例列表</div>
+    </div>
+    <div class="card-body">
+      <h3>A · 直接扩展实例列表</h3>
+      <p>改动最少，所有操作都留在现有列表；但运行状态和异常详情空间有限。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="control-room" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px">
+      <div class="mock-nav">群控工作台　　运行中 · 6 个窗口</div>
+      <div style="display:grid;grid-template-columns:1.4fr .8fr;gap:8px;margin-top:8px;height:130px">
+        <div style="border:1px solid var(--border);padding:10px">
+          <div class="label">主控实例</div>
+          <div class="placeholder" style="height:70px;margin-top:7px">账号 01</div>
+        </div>
+        <div style="border:1px solid var(--border);padding:10px">
+          <div class="label">同步状态</div>
+          <p style="margin:8px 0">5 / 5 已对齐</p>
+          <button class="mock-button">暂停群控</button>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · 独立群控工作台</h3>
+      <p>集中展示主控、从窗口状态、异常、暂停/恢复和平铺；结构最清晰。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="persistent-dock" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px">
+      <div class="mock-nav">浏览器实例　代理　内核</div>
+      <div class="placeholder" style="height:88px;margin-top:8px">实例列表</div>
+      <div style="margin-top:8px;border:2px solid var(--border);padding:10px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span><strong>群控中</strong> · 主控 01 · 5 个从窗口</span>
+        <span><button class="mock-button">暂停</button> <button class="mock-button">平铺</button></span>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · 全局常驻控制条</h3>
+      <p>从实例列表启动后，控制条跨页面常驻；操作方便，但详细诊断仍需弹窗或侧栏。</p>
+    </div>
+  </div>
+</div>

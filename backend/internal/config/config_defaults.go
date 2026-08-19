@@ -243,7 +243,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Logging: LoggingConfig{
-			Level:           "info",
+			Level:           "debug",
 			FileEnabled:     false,
 			FilePath:        "data/logs/app.log",
 			Format:          "text",

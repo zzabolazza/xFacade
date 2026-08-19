@@ -64,30 +64,24 @@ func (a *App) BrowserExtensionInstallWithProxy(input BrowserExtensionWebStoreReq
 	if err != nil {
 		return BrowserExtension{}, fmt.Errorf("下载代理配置错误: %w", err)
 	}
-	return a.browserMgr.InstallExtensionFromWebStoreWithHTTPClient(a.ctx, input.Query, client, input.AllowOverwrite)
+	extension, err := a.browserMgr.InstallExtensionFromWebStoreWithHTTPClient(a.ctx, input.Query, client, input.AllowOverwrite)
+	if err != nil {
+		return BrowserExtension{}, err
+	}
+	logExtensionSaved("webstore", extension)
+	return extension, nil
 }
 
 func (a *App) extensionDownloadHTTPClient(useProxy bool, proxyConfig string) (*http.Client, error) {
 	proxyConfig = strings.TrimSpace(proxyConfig)
-	log := logger.New("Extension")
 	if useProxy && proxyConfig == "" {
 		return nil, fmt.Errorf("已启用下载代理，但代理配置为空，请重新选择代理节点")
 	}
 	if proxyConfig == "" || strings.EqualFold(proxyConfig, "direct://") {
-		log.Info("Chrome 插件下载使用直连")
 		return &http.Client{Timeout: browser.ExtensionDownloadTimeout()}, nil
 	}
 	proxies := a.getLatestProxies()
-	log.Info("Chrome 插件下载使用代理", logger.F("proxy_prefix", proxyConfigLogPrefix(proxyConfig)))
 	return proxy.BuildProxyHTTPClient(proxyConfig, "", proxies, browser.ExtensionDownloadTimeout())
-}
-
-func proxyConfigLogPrefix(proxyConfig string) string {
-	proxyConfig = strings.TrimSpace(proxyConfig)
-	if len(proxyConfig) <= 24 {
-		return proxyConfig
-	}
-	return proxyConfig[:24]
 }
 
 func (a *App) BrowserExtensionInstallLocalFile() (BrowserExtension, error) {
@@ -112,7 +106,12 @@ func (a *App) BrowserExtensionInstallLocalFile() (BrowserExtension, error) {
 	if strings.TrimSpace(path) == "" {
 		return BrowserExtension{}, fmt.Errorf("已取消选择")
 	}
-	return a.browserMgr.InstallExtensionPackageFile(path)
+	extension, err := a.browserMgr.InstallExtensionPackageFile(path)
+	if err != nil {
+		return BrowserExtension{}, err
+	}
+	logExtensionSaved("local_file", extension)
+	return extension, nil
 }
 
 func (a *App) BrowserExtensionSetEnabled(extensionID string, enabled bool) (BrowserExtension, error) {
@@ -156,6 +155,11 @@ func (a *App) BrowserExtensionDelete(extensionID string) error {
 	if err := a.browserMgr.ExtensionDAO.Delete(extensionID); err != nil {
 		return err
 	}
+	logger.New("Extension").Info("插件已删除",
+		logger.F("extension_id", extension.ExtensionID),
+		logger.F("name", extension.Name),
+		logger.F("version", extension.Version),
+	)
 	return nil
 }
 
@@ -205,5 +209,22 @@ func (a *App) BrowserProfileExtensionSave(profileID string, extensionIDs []strin
 	if a.browserMgr == nil || a.browserMgr.ExtensionDAO == nil {
 		return BrowserProfileExtensionSettings{}, fmt.Errorf("插件管理器未初始化")
 	}
-	return a.browserMgr.ExtensionDAO.SetProfileSettings(profileID, extensionIDs, configured)
+	settings, err := a.browserMgr.ExtensionDAO.SetProfileSettings(profileID, extensionIDs, configured)
+	if err != nil {
+		return BrowserProfileExtensionSettings{}, err
+	}
+	logger.New("Extension").Info("实例扩展配置已保存",
+		logger.F("profile_id", settings.ProfileID),
+		logger.F("extension_count", len(settings.ExtensionIDs)),
+	)
+	return settings, nil
+}
+
+func logExtensionSaved(source string, extension BrowserExtension) {
+	logger.New("Extension").Info("插件已安装",
+		logger.F("extension_id", extension.ExtensionID),
+		logger.F("name", extension.Name),
+		logger.F("version", extension.Version),
+		logger.F("source", source),
+	)
 }

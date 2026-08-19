@@ -1,4 +1,3 @@
-const MUTATION_METHOD_PATTERN = /(Create|Update|Delete|Save|Set|Import|Export|Install|Uninstall|Download|Start|Stop|Launch|Run|Clear|Move|Copy|Refresh|Sync|Validate|Toggle|Switch|Enable|Disable|Force|Quit|Open|Close|Apply|Bind|Unbind|Restart|Warmup|Probe|Check|Test)/
 const SKIP_METHODS = new Set(['GetAppLogs', 'FrontendOperationLog'])
 
 let installed = false
@@ -13,9 +12,8 @@ function stringifyError(error: unknown) {
   }
 }
 
-function shouldLogSuccess(method: string) {
-  if (SKIP_METHODS.has(method)) return false
-  return MUTATION_METHOD_PATTERN.test(method)
+function shouldLogSuccess(_method: string) {
+  return false
 }
 
 function shouldLogFailure(method: string) {

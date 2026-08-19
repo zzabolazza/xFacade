@@ -17,7 +17,6 @@ interface ProxyPoolTableCardProps {
   filterGroup: string
   filterKeyword: string
   filterProtocol: string
-  filterAvailableOnly: boolean
   groups: string[]
   ipHealthMap: Record<string, ProxyIPHealthResult>
   loading: boolean
@@ -32,7 +31,6 @@ interface ProxyPoolTableCardProps {
   onFilterGroupChange: (nextValue: string) => void
   onFilterKeywordChange: (nextValue: string) => void
   onFilterProtocolChange: (nextValue: string) => void
-  onFilterAvailableOnlyChange: (checked: boolean) => void
   onOpenBatchDelete: () => void
   onSort: (next: { column: string; order: SortOrder }) => void
   onTestOne: (record: ProxyDisplayInfo) => void
@@ -56,7 +54,6 @@ export function ProxyPoolTableCard({
   filterGroup,
   filterKeyword,
   filterProtocol,
-  filterAvailableOnly,
   groups,
   ipHealthMap,
   loading,
@@ -67,7 +64,6 @@ export function ProxyPoolTableCard({
   onFilterGroupChange,
   onFilterKeywordChange,
   onFilterProtocolChange,
-  onFilterAvailableOnlyChange,
   onOpenBatchDelete,
   onSort,
   onTestOne,
@@ -87,7 +83,7 @@ export function ProxyPoolTableCard({
   onBatchCheckIPHealth,
   onBatchTestSpeed,
 }: ProxyPoolTableCardProps) {
-  const hasActiveFilters = filterProtocol !== 'all' || !!filterKeyword || filterGroup !== 'all' || filterAvailableOnly
+  const hasActiveFilters = filterProtocol !== 'all' || !!filterKeyword || filterGroup !== 'all'
 
   const renderLatency = (record: ProxyDisplayInfo) => {
     const value = latencyMap[record.proxyId]
@@ -318,15 +314,6 @@ export function ProxyPoolTableCard({
         {hasActiveFilters && (
           <Button size="sm" variant="ghost" onClick={onClearFilters}>清除筛选</Button>
         )}
-        <label className="flex cursor-pointer select-none items-center gap-1.5 text-[12.5px] text-[var(--color-text-secondary)]">
-          <input
-            type="checkbox"
-            checked={filterAvailableOnly}
-            onChange={(event) => onFilterAvailableOnlyChange(event.target.checked)}
-            className="h-4 w-4 cursor-pointer rounded border-[var(--color-border-default)] accent-[var(--color-accent)]"
-          />
-          只展示可用
-        </label>
         <div className="flex-1" />
         {data.length > 0 && (
           <label className="flex cursor-pointer select-none items-center gap-1.5 text-[12.5px] text-[var(--color-text-muted)]">

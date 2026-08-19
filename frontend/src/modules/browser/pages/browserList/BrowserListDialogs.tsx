@@ -2,7 +2,6 @@ import { Link } from 'react-router-dom'
 import { XCircle } from 'lucide-react'
 import { Button, Modal } from '../../../../shared/components'
 import { BrowserProfileCopyForm } from '../../components/BrowserProfileCopyForm'
-import { KeywordsModal } from '../../components/KeywordsModal'
 import type { BrowserProfile, BrowserProfileCopyOptions } from '../../types'
 
 interface BrowserListDialogsProps {
@@ -12,9 +11,6 @@ interface BrowserListDialogsProps {
   onCloseProxyError: () => void
   onStartDirect: () => void
   startingDirect: boolean
-  kwModal: { open: boolean; profile: BrowserProfile | null }
-  onCloseKeywords: () => void
-  onKeywordsSaved: (keywords: string[]) => void
   copyModal: { open: boolean; profile: BrowserProfile | null }
   copyName: string
   copyOptions: BrowserProfileCopyOptions
@@ -39,9 +35,6 @@ export function BrowserListDialogs({
   onCloseProxyError,
   onStartDirect,
   startingDirect,
-  kwModal,
-  onCloseKeywords,
-  onKeywordsSaved,
   copyModal,
   copyName,
   copyOptions,
@@ -89,17 +82,6 @@ export function BrowserListDialogs({
           <p className="text-sm text-[var(--color-text-muted)]">请前往编辑页面重新选择可用链路；如果是订阅导入，先刷新订阅并确认该节点仍存在。</p>
         </div>
       </Modal>
-
-      {kwModal.profile && (
-        <KeywordsModal
-          open={kwModal.open}
-          profileId={kwModal.profile.profileId}
-          profileName={kwModal.profile.profileName}
-          initialKeywords={kwModal.profile.keywords || []}
-          onClose={onCloseKeywords}
-          onSaved={onKeywordsSaved}
-        />
-      )}
 
       <Modal
         open={copyModal.open}
