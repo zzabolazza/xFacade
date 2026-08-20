@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Keyboard, MousePointer2, RefreshCw, RotateCw, Square } from 'lucide-react'
+import { AlertTriangle, Keyboard, MousePointer2, RefreshCw, RotateCw, Square } from 'lucide-react'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import { Button, toast } from '../../../shared/components'
 import type { BrowserInputSyncStatus, BrowserInputSyncTargetStatus, BrowserProfile, BrowserWindowTileRequest } from '../types'
@@ -23,6 +23,40 @@ interface BrowserRetileResult {
   failed: number
   failureMessages: string[]
   notReadyProfileIds: Set<string>
+}
+
+const INPUT_SYNC_MASTER_STORAGE_KEY = 'browser:inputSync:lastMasterId'
+
+function loadLastInputSyncMasterId(): string {
+  if (typeof window === 'undefined' || !window.localStorage) return ''
+  try {
+    return (window.localStorage.getItem(INPUT_SYNC_MASTER_STORAGE_KEY) || '').trim()
+  } catch {
+    return ''
+  }
+}
+
+function saveLastInputSyncMasterId(profileId: string) {
+  if (typeof window === 'undefined' || !window.localStorage) return
+  const id = profileId.trim()
+  if (!id) return
+  try {
+    window.localStorage.setItem(INPUT_SYNC_MASTER_STORAGE_KEY, id)
+  } catch {
+    // Ignore quota / private-mode failures.
+  }
+}
+
+function pickPreferredMasterId(
+  candidates: BrowserProfile[],
+  preferredIds: Array<string | undefined>,
+): string {
+  for (const preferred of preferredIds) {
+    const id = (preferred || '').trim()
+    if (!id) continue
+    if (candidates.some(profile => profile.profileId === id)) return id
+  }
+  return candidates[0]?.profileId || ''
 }
 
 function formatInputSyncPauseKind(kind?: string): string {
@@ -96,7 +130,7 @@ export function BrowserInputSyncPage() {
     loadProfiles,
   } = useBrowserListData()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [masterId, setMasterId] = useState('')
+  const [masterId, setMasterId] = useState(() => loadLastInputSyncMasterId())
   const [retileLoading, setRetileLoading] = useState(false)
   const [inputSyncLoading, setInputSyncLoading] = useState(false)
   const [inputSyncStatus, setInputSyncStatus] = useState<BrowserInputSyncStatus | null>(null)
@@ -113,8 +147,11 @@ export function BrowserInputSyncPage() {
     () => runningProfiles.filter(profile => selectedIds.has(profile.profileId)),
     [runningProfiles, selectedIds],
   )
+  const allRunningSelected = runningProfiles.length > 0 && selectedRunningProfiles.length === runningProfiles.length
+  const partiallyRunningSelected = selectedRunningProfiles.length > 0 && !allRunningSelected
   const resolvedMaster = selectedRunningProfiles.find(profile => profile.profileId === masterId) || selectedRunningProfiles[0] || null
   const inputSyncRunning = inputSyncStatus?.running === true
+  const selectionDisabled = inputSyncLoading || inputSyncRunning
   const readyTargets = inputSyncStatus?.targets?.filter(target => target.ready) || []
   const pausedTargets = inputSyncStatus?.targets?.filter(target => target.paused) || []
   const recoverablePausedTargets = pausedTargets.filter(target => target.recoverable)
@@ -162,6 +199,10 @@ export function BrowserInputSyncPage() {
   }, [runningProfileIds])
 
   useEffect(() => {
+    if (masterId) saveLastInputSyncMasterId(masterId)
+  }, [masterId])
+
+  useEffect(() => {
     if (resolvedMaster) {
       if (masterId !== resolvedMaster.profileId) setMasterId(resolvedMaster.profileId)
       return
@@ -177,12 +218,15 @@ export function BrowserInputSyncPage() {
       if (next.has(profileId)) {
         next.delete(profileId)
         if (masterId === profileId) {
-          const fallback = runningProfiles.find(profile => profile.profileId !== profileId && next.has(profile.profileId))
-          setMasterId(fallback?.profileId || '')
+          const remaining = runningProfiles.filter(profile => profile.profileId !== profileId && next.has(profile.profileId))
+          setMasterId(pickPreferredMasterId(remaining, [loadLastInputSyncMasterId()]))
         }
       } else {
         next.add(profileId)
-        if (!masterId) setMasterId(profileId)
+        if (!masterId) {
+          const selected = runningProfiles.filter(profile => next.has(profile.profileId))
+          setMasterId(pickPreferredMasterId(selected, [loadLastInputSyncMasterId(), profileId]))
+        }
       }
       return next
     })
@@ -190,7 +234,7 @@ export function BrowserInputSyncPage() {
 
   const selectAllRunning = () => {
     setSelectedIds(new Set(runningProfiles.map(profile => profile.profileId)))
-    if (!masterId && runningProfiles[0]) setMasterId(runningProfiles[0].profileId)
+    setMasterId(pickPreferredMasterId(runningProfiles, [masterId, loadLastInputSyncMasterId()]))
   }
 
   const clearSelection = () => {
@@ -387,80 +431,47 @@ export function BrowserInputSyncPage() {
 
   return (
     <div className="h-full overflow-auto pb-5 animate-fade-in">
-      <div className="space-y-4">
-        <section className="flex flex-col gap-3 border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">输入同步</h1>
-            <div className="mt-1 flex flex-wrap gap-2 text-xs text-[var(--color-text-muted)]">
-              <span>运行实例：{runningProfiles.length}</span>
-              <span>已选：{selectedRunningProfiles.length}</span>
-              <span>状态：{inputSyncRunning ? '同步中' : '未同步'}</span>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => { void refreshAll() }} disabled={inputSyncLoading || retileLoading}>
-              <RefreshCw className="h-3.5 w-3.5" />刷新
-            </Button>
-            <Button
-              variant={inputSyncRunning ? 'secondary' : 'primary'}
-              onClick={() => { void handleStartInputSync() }}
-              loading={inputSyncLoading || retileLoading}
-              disabled={inputSyncRunning || selectedRunningProfiles.length < 2}
-            >
-              <MousePointer2 className="h-3.5 w-3.5" />平铺并开始同步
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => { void handleStopInputSync() }}
-              loading={inputSyncLoading}
-              disabled={!inputSyncRunning}
-            >
-              <Square className="h-3.5 w-3.5" />停止同步
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => { void handleRunSpecialInputSync() }}
-              disabled={!inputSyncRunning || inputSyncLoading}
-            >
-              <Keyboard className="h-3.5 w-3.5" />窗口级
-            </Button>
-          </div>
+      <div className="space-y-4 px-5">
+        <section>
+          <p className="max-w-2xl text-[12.5px] leading-5 text-[var(--color-text-muted)]">
+            指定一个主控，其余为从浏览器。主控上的鼠标、键盘、滚动、导航与 Tab 操作会实时同步到从浏览器。
+          </p>
         </section>
 
-        <section className="grid gap-3 px-5 md:grid-cols-5">
-          <div className="border border-[var(--color-border-muted)] bg-[var(--color-bg-surface)] px-3 py-3">
-            <div className="text-xs text-[var(--color-text-muted)]">主控</div>
-            <div className="mt-1 truncate text-sm font-semibold text-[var(--color-text-primary)]">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="rounded-[10px] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-4 py-3">
+            <div className="text-[11.5px] font-semibold text-[var(--color-text-muted)]">主控</div>
+            <div className="mt-1.5 truncate text-xl font-extrabold tracking-tight text-[var(--color-text-primary)]">
               {inputSyncStatus?.masterName || resolvedMaster?.profileName || '-'}
             </div>
           </div>
-          <div className="border border-[var(--color-border-muted)] bg-[var(--color-bg-surface)] px-3 py-3">
-            <div className="text-xs text-[var(--color-text-muted)]">目标</div>
-            <div className="mt-1 text-sm font-semibold text-[var(--color-text-primary)]">{readyTargets.length}</div>
+          <div className="rounded-[10px] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-4 py-3">
+            <div className="text-[11.5px] font-semibold text-[var(--color-text-muted)]">目标</div>
+            <div className="mt-1.5 text-xl font-extrabold tracking-tight text-[var(--color-text-primary)]">{readyTargets.length}</div>
           </div>
-          <div className="border border-[var(--color-border-muted)] bg-[var(--color-bg-surface)] px-3 py-3">
-            <div className="text-xs text-[var(--color-text-muted)]">暂停</div>
-            <div className={pausedTargets.length > 0 ? 'mt-1 text-sm font-semibold text-[var(--color-warning)]' : 'mt-1 text-sm font-semibold text-[var(--color-text-primary)]'}>
+          <div className="rounded-[10px] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-4 py-3">
+            <div className="text-[11.5px] font-semibold text-[var(--color-text-muted)]">暂停</div>
+            <div className={pausedTargets.length > 0 ? 'mt-1.5 text-xl font-extrabold tracking-tight text-[var(--color-warning)]' : 'mt-1.5 text-xl font-extrabold tracking-tight text-[var(--color-text-primary)]'}>
               {pausedTargets.length}
             </div>
           </div>
-          <div className="border border-[var(--color-border-muted)] bg-[var(--color-bg-surface)] px-3 py-3">
-            <div className="text-xs text-[var(--color-text-muted)]">等待加载</div>
-            <div className={waitingTargets.length > 0 ? 'mt-1 text-sm font-semibold text-[var(--color-warning)]' : 'mt-1 text-sm font-semibold text-[var(--color-text-primary)]'}>
+          <div className="rounded-[10px] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-4 py-3">
+            <div className="text-[11.5px] font-semibold text-[var(--color-text-muted)]">等待加载</div>
+            <div className={waitingTargets.length > 0 ? 'mt-1.5 text-xl font-extrabold tracking-tight text-[var(--color-warning)]' : 'mt-1.5 text-xl font-extrabold tracking-tight text-[var(--color-text-primary)]'}>
               {waitingTargets.length}
             </div>
           </div>
-          <div className="border border-[var(--color-border-muted)] bg-[var(--color-bg-surface)] px-3 py-3">
-            <div className="text-xs text-[var(--color-text-muted)]">事件</div>
-            <div className="mt-1 text-sm font-semibold text-[var(--color-text-primary)]">
+          <div className="rounded-[10px] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-4 py-3">
+            <div className="text-[11.5px] font-semibold text-[var(--color-text-muted)]">事件</div>
+            <div className="mt-1.5 text-xl font-extrabold tracking-tight text-[var(--color-text-primary)]">
               {inputSyncStatus?.eventCount || 0}
-              {inputSyncStatus?.lastEventAt && <span className="ml-2 font-normal text-[11px] text-[var(--color-text-muted)]">{new Date(inputSyncStatus.lastEventAt).toLocaleTimeString()}</span>}
+              {inputSyncStatus?.lastEventAt && <span className="ml-2 text-[11px] font-normal text-[var(--color-text-muted)]">{new Date(inputSyncStatus.lastEventAt).toLocaleTimeString()}</span>}
             </div>
           </div>
         </section>
 
         {warningTargets.length > 0 && (
-          <section className="mx-5 border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 px-3 py-3">
+          <section className="rounded-[10px] border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 px-3 py-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-[var(--color-text-primary)]">
               <AlertTriangle className="h-4 w-4 text-[var(--color-warning)]" />
               同步提示
@@ -473,18 +484,43 @@ export function BrowserInputSyncPage() {
           </section>
         )}
 
-        <section className="mx-5 border border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
-          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border-default)] px-4 py-3">
+        <section className="rounded-[10px] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
+          <div className="flex flex-wrap items-center gap-3 border-b border-[var(--color-border-default)] px-4 py-3">
             <div className="min-w-0 flex-1">
               <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">运行实例</h2>
               <div className="mt-1 text-xs text-[var(--color-text-muted)]">{selectedRunningProfiles.length} / {runningProfiles.length}</div>
             </div>
-            <Button size="sm" variant="secondary" onClick={selectAllRunning} disabled={runningProfiles.length === 0 || inputSyncLoading}>
-              <CheckCircle2 className="h-3.5 w-3.5" />全选运行
-            </Button>
-            <Button size="sm" variant="ghost" onClick={clearSelection} disabled={selectedRunningProfiles.length === 0 || inputSyncLoading}>
-              清空
-            </Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button size="sm" variant="secondary" onClick={() => { void refreshAll() }} disabled={inputSyncLoading || retileLoading}>
+                <RefreshCw className="h-4 w-4" />刷新
+              </Button>
+              <Button
+                size="sm"
+                variant={inputSyncRunning ? 'secondary' : 'primary'}
+                onClick={() => { void handleStartInputSync() }}
+                loading={inputSyncLoading || retileLoading}
+                disabled={inputSyncRunning || selectedRunningProfiles.length < 2}
+              >
+                <MousePointer2 className="h-4 w-4" />开始
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => { void handleStopInputSync() }}
+                loading={inputSyncLoading && inputSyncRunning}
+                disabled={!inputSyncRunning || inputSyncLoading}
+              >
+                <Square className="h-4 w-4" />停止
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => { void handleRunSpecialInputSync() }}
+                disabled={!inputSyncRunning || inputSyncLoading}
+              >
+                <Keyboard className="h-4 w-4" />窗口级
+              </Button>
+            </div>
           </div>
 
           {loading ? (
@@ -496,7 +532,21 @@ export function BrowserInputSyncPage() {
               <table className="w-full min-w-[720px] border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] text-left text-[11px] uppercase text-[var(--color-text-muted)]">
-                    <th className="w-20 px-4 py-2 font-semibold">选择</th>
+                    <th className="w-12 px-4 py-2 font-semibold">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 cursor-pointer rounded accent-[var(--color-accent)]"
+                        checked={allRunningSelected}
+                        disabled={runningProfiles.length === 0 || selectionDisabled}
+                        ref={(input) => {
+                          if (input) input.indeterminate = partiallyRunningSelected
+                        }}
+                        onChange={(event) => {
+                          if (event.target.checked) selectAllRunning()
+                          else clearSelection()
+                        }}
+                      />
+                    </th>
                     <th className="w-20 px-4 py-2 font-semibold">主控</th>
                     <th className="px-4 py-2 font-semibold">实例</th>
                     <th className="w-28 px-4 py-2 font-semibold">CDP</th>
@@ -512,9 +562,9 @@ export function BrowserInputSyncPage() {
                         <td className="px-4 py-3">
                           <input
                             type="checkbox"
-                            className="h-4 w-4 accent-[var(--color-accent)]"
+                            className="h-4 w-4 cursor-pointer rounded accent-[var(--color-accent)]"
                             checked={selected}
-                            disabled={inputSyncLoading || inputSyncRunning}
+                            disabled={selectionDisabled}
                             onChange={() => toggleSelect(profile.profileId)}
                           />
                         </td>
@@ -524,7 +574,7 @@ export function BrowserInputSyncPage() {
                             name="input-sync-master"
                             className="h-4 w-4 accent-[var(--color-accent)]"
                             checked={selected && isMaster}
-                            disabled={!selected || inputSyncLoading || inputSyncRunning}
+                            disabled={!selected || selectionDisabled}
                             onChange={() => setMasterId(profile.profileId)}
                           />
                         </td>
@@ -553,7 +603,7 @@ export function BrowserInputSyncPage() {
         </section>
 
         {pausedTargets.length > 0 && (
-          <section className="mx-5 border border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
+          <section className="rounded-[10px] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
             <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border-default)] px-4 py-3">
               <h2 className="min-w-0 flex-1 text-sm font-semibold text-[var(--color-text-primary)]">暂停目标</h2>
               <Button
