@@ -78,6 +78,14 @@ export interface BrowserInputSyncTargetStatus {
   profileName: string
   debugPort: number
   ready: boolean
+  paused: boolean
+  pauseReason?: string
+  pauseKind?: string
+  recoverable: boolean
+  recoverAttemptCount: number
+  nextRecoverAt?: string
+  failureCount: number
+  droppedActionCount: number
   warning?: string
 }
 

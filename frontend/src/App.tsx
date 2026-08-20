@@ -1,7 +1,7 @@
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { BrowserRouter as Router } from "react-router-dom";
 import { Layout } from "./shared/layout";
-import { ToastContainer, Modal, Button, Loading } from "./shared/components";
+import { ToastContainer, Modal, Button, Loading, useToastStore } from "./shared/components";
 import {
   AlertTriangle,
   ChevronRight,
@@ -14,6 +14,7 @@ import { AppRoutes } from "./routes/AppRoutes";
 import { lazyNamed } from "./routes/lazyNamed";
 import { useNotificationStore } from "./store/notificationStore";
 import { useBackupStore } from "./store/backupStore";
+import type { BrowserInputSyncStatus } from "./modules/browser/types";
 import { installWailsOperationLogger } from "./utils/wailsOperationLogger";
 import {
   ForceQuit as ForceQuitApp,
@@ -24,6 +25,11 @@ import {
   Quit,
   WindowHide,
   WindowMinimise,
+  InitializeNotifications,
+  IsNotificationAvailable,
+  RequestNotificationAuthorization,
+  CheckNotificationAuthorization,
+  SendNotification,
 } from "./wailsjs/runtime/runtime";
 
 const QuickLaunchModal = lazyNamed(
@@ -51,6 +57,131 @@ function useWailsNotifications() {
 
     return () => {
       offCrashed?.();
+    };
+  }, [addNotification]);
+}
+
+function useInputSyncNotifications() {
+  const addNotification = useNotificationStore((s) => s.addNotification);
+  const nativeReadyRef = useRef(false);
+  const previousStatusRef = useRef<BrowserInputSyncStatus | null>(null);
+  const notifiedKeysRef = useRef<Set<string>>(new Set());
+  const activePauseKeysRef = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    async function initNativeNotifications() {
+      try {
+        const available = await IsNotificationAvailable();
+        if (!available || cancelled) return;
+        await InitializeNotifications();
+        let authorized = await CheckNotificationAuthorization();
+        if (!authorized) {
+          authorized = await RequestNotificationAuthorization();
+        }
+        if (!cancelled) nativeReadyRef.current = authorized;
+      } catch {
+        if (!cancelled) nativeReadyRef.current = false;
+      }
+    }
+    void initNativeNotifications();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const runtime = (window as any).runtime;
+    if (!runtime?.EventsOn) return;
+
+    const sendNotice = (
+      type: "info" | "success" | "warning" | "error",
+      title: string,
+      message: string,
+      key: string,
+    ) => {
+      if (notifiedKeysRef.current.has(key)) return;
+      notifiedKeysRef.current.add(key);
+      addNotification({ type, title, message });
+      useToastStore.getState().addToast({
+        type,
+        message: `${title}\n${message}`,
+        duration: type === "success" || type === "info" ? 5000 : 7000,
+      });
+      if (nativeReadyRef.current) {
+        void SendNotification({
+          id: key.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 96),
+          title,
+          body: message,
+        }).catch(() => {
+          nativeReadyRef.current = false;
+        });
+      }
+    };
+
+    const off = runtime.EventsOn("browser:input-sync:status", (status: BrowserInputSyncStatus) => {
+      const previous = previousStatusRef.current;
+      const sessionKey = status?.sessionId || "session";
+      const previousSessionKey = previous?.sessionId || "session";
+      if (status?.running && previous?.running && sessionKey !== previousSessionKey) {
+        notifiedKeysRef.current.clear();
+        activePauseKeysRef.current.clear();
+      }
+      previousStatusRef.current = status;
+
+      if (!status?.running) {
+        notifiedKeysRef.current.clear();
+        activePauseKeysRef.current.clear();
+        return;
+      }
+
+      if (status.warning) {
+        sendNotice(
+          "error",
+          "输入同步异常",
+          status.warning,
+          `input-sync-session-warning:${status.sessionId || "session"}:${status.warning}`,
+        );
+      }
+
+      const previousTargets = new Map((previous?.targets || []).map(target => [target.profileId, target]));
+      for (const target of status.targets || []) {
+        const previousTarget = previousTargets.get(target.profileId);
+        const name = target.profileName || target.profileId;
+        const reason = target.pauseReason || target.warning || "输入同步已暂停";
+        const targetKey = `${sessionKey}:${target.profileId}`;
+        if (target.paused && (!previousTarget?.paused || previousTarget.pauseReason !== target.pauseReason || previousTarget.warning !== target.warning)) {
+          const pauseKey = `input-sync-paused:${targetKey}:${target.pauseKind || "unknown"}:${reason}`;
+          sendNotice(
+            target.recoverable ? "warning" : "error",
+            "输入同步目标已暂停",
+            `${name}：${reason}`,
+            pauseKey,
+          );
+          activePauseKeysRef.current.set(targetKey, pauseKey);
+          continue;
+        }
+        if (!target.paused && previousTarget?.paused && target.ready) {
+          const pauseKey = activePauseKeysRef.current.get(targetKey);
+          if (pauseKey) {
+            sendNotice(
+              "success",
+              "输入同步目标已恢复",
+              `${name} 已恢复同步`,
+              `input-sync-recovered:${targetKey}:${pauseKey}`,
+            );
+          }
+          activePauseKeysRef.current.delete(targetKey);
+          continue;
+        }
+        if (!target.paused && activePauseKeysRef.current.has(targetKey) && !previousTarget?.paused) {
+          activePauseKeysRef.current.delete(targetKey);
+        }
+      }
+    });
+
+    return () => {
+      off?.();
     };
   }, [addNotification]);
 }
@@ -285,6 +416,7 @@ function App() {
     installWailsOperationLogger();
   }, []);
   useWailsNotifications();
+  useInputSyncNotifications();
   useGlobalErrorNotifications();
   const [quickLaunchOpen, setQuickLaunchOpen] = useState(false);
   const routeFallback = (

@@ -78,7 +78,7 @@ export function BatchToolbar({
           onClick={inputSyncRunning ? onStopInputSync : onStartInputSync}
           loading={inputSyncLoading}
           disabled={inputSyncRunning ? inputSyncLoading : selectedRunningCount < 2 || batchBusy}
-          title={inputSyncRunning ? '停止网页输入同步' : selectedRunningCount >= 2 ? '以第一个已选运行实例为主控，开启网页输入同步' : '至少选择 2 个运行实例'}
+          title={inputSyncRunning ? '停止网页输入同步' : selectedRunningCount >= 2 ? '开启网页输入同步' : '至少选择 2 个运行实例'}
         >
           <MousePointer2 className="w-3.5 h-3.5" />{inputSyncRunning ? '停同步' : '同步'}
         </Button>

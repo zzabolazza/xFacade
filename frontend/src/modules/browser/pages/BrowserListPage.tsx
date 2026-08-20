@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
-import { toast } from '../../../shared/components'
+import { Button, Modal, toast } from '../../../shared/components'
 import { flushThemeForBackup } from '../../../shared/theme/theme'
 import type { BrowserInputSyncStatus, BrowserProfile, BrowserProfileCopyOptions, BrowserProxy } from '../types'
 import { BrowserListHeader } from '../components/BrowserListLayout'
@@ -21,6 +21,7 @@ import {
   copyBrowserProfile,
   deleteBrowserProfile,
   exportBrowserProfilePackage,
+  focusBrowserInstance,
   importBrowserProfilePackage,
   setBrowserInstancesWindowBounds,
   setBrowserInstanceWindowBounds,
@@ -31,6 +32,8 @@ import {
   importFullBrowserBackup,
   pickFullBrowserBackupFile,
   fetchBrowserInputSyncStatus,
+  resumeBrowserInputSyncTarget,
+  resumeRecoverableBrowserInputSyncTargets,
   runBrowserInputSyncSpecialMode,
   startBrowserInputSync,
   stopBrowserInputSync,
@@ -39,6 +42,46 @@ import {
 type BackupLoadingMode = 'none' | 'export' | 'import-merge' | 'import-reset'
 
 const directProxyID = '__direct__'
+
+function formatInputSyncPauseKind(kind?: string): string {
+  switch (kind) {
+    case 'challenge':
+      return '验证码/风控'
+    case 'cdp_disconnected':
+      return 'CDP 连接'
+    case 'dom_mismatch':
+      return 'DOM 定位'
+    case 'url_deviation':
+      return 'URL 偏离'
+    case 'action_failures':
+      return '连续失败'
+    default:
+      return '暂停'
+  }
+}
+
+function formatInputSyncRecoverTime(value?: string): string {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return date.toLocaleTimeString()
+}
+
+function orderTilingTargetsForInputSync(
+  targets: BrowserProfile[],
+  masterProfileId: string | undefined,
+  inputSyncRunning: boolean,
+): BrowserProfile[] {
+  const masterId = (masterProfileId || '').trim()
+  if (!inputSyncRunning || !masterId) return targets
+  const masterIndex = targets.findIndex(profile => profile.profileId === masterId)
+  if (masterIndex <= 0) return targets
+  return [
+    targets[masterIndex],
+    ...targets.slice(0, masterIndex),
+    ...targets.slice(masterIndex + 1),
+  ]
+}
 
 export function BrowserListPage() {
   const {
@@ -49,12 +92,15 @@ export function BrowserListPage() {
   } = useBrowserListViewState()
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [inputSyncMasterId, setInputSyncMasterId] = useState('')
   const [batchOperation, setBatchOperation] = useState<'start' | 'stop' | 'delete' | null>(null)
   const batchLoading = batchOperation !== null
   const batchStarting = batchOperation === 'start'
   const batchStopping = batchOperation === 'stop'
   const [retileLoading, setRetileLoading] = useState(false)
   const [inputSyncStatus, setInputSyncStatus] = useState<BrowserInputSyncStatus | null>(null)
+  const [inputSyncMasterDialogOpen, setInputSyncMasterDialogOpen] = useState(false)
+  const [inputSyncPausedDialogOpen, setInputSyncPausedDialogOpen] = useState(false)
   const [inputSyncLoading, setInputSyncLoading] = useState(false)
   const [profilePackageBusy, setProfilePackageBusy] = useState(false)
   const [backupModalOpen, setBackupModalOpen] = useState(false)
@@ -139,23 +185,44 @@ export function BrowserListPage() {
     loadProfiles,
   })
 
+  const getSelectedRunningProfiles = () => Array.from(selectedIds)
+    .map(id => profiles.find(profile => profile.profileId === id))
+    .filter((profile): profile is BrowserProfile => !!profile && profile.running)
+
+  const applyInputSyncStatus = (status: BrowserInputSyncStatus) => {
+    setInputSyncStatus(status)
+    if (status.running && status.masterProfileId) {
+      setInputSyncMasterId(status.masterProfileId)
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
     fetchBrowserInputSyncStatus()
       .then((status) => {
-        if (!cancelled) setInputSyncStatus(status)
+        if (!cancelled) applyInputSyncStatus(status)
       })
       .catch(() => {
         if (!cancelled) setInputSyncStatus(null)
       })
     const off = EventsOn('browser:input-sync:status', (status: BrowserInputSyncStatus) => {
-      setInputSyncStatus(status)
+      applyInputSyncStatus(status)
     })
     return () => {
       cancelled = true
       off()
     }
   }, [])
+
+  useEffect(() => {
+    if (inputSyncStatus?.running || !inputSyncMasterId) return
+    const masterStillSelectable = Array.from(selectedIds)
+      .map(id => profiles.find(profile => profile.profileId === id))
+      .some(profile => profile?.running && profile.profileId === inputSyncMasterId)
+    if (!masterStillSelectable) {
+      setInputSyncMasterId('')
+    }
+  }, [inputSyncMasterId, inputSyncStatus?.running, profiles, selectedIds])
   // 批量操作
   const toggleSelect = (profileId: string) => {
     setSelectedIds(prev => {
@@ -230,10 +297,26 @@ export function BrowserListPage() {
     loadProfiles()
   }
 
+  const restoreInputSyncMasterFocusAfterTiling = async (tiledTargets: BrowserProfile[]) => {
+    const masterId = inputSyncStatus?.running ? inputSyncStatus.masterProfileId : ''
+    if (!masterId || !tiledTargets.some(profile => profile.profileId === masterId)) return
+    try {
+      const result = await focusBrowserInstance(masterId)
+      if (result.warning) {
+        toast.warning(`主控窗口已放到左上角，但恢复聚焦提示：${result.warning}`)
+      }
+    } catch (error: any) {
+      toast.warning(error?.message || '主控窗口已放到左上角，但恢复聚焦失败')
+    }
+  }
+
   const handleRetileRunning = async () => {
-    const runningTargets = Array.from(selectedIds)
-      .map(id => profiles.find(profile => profile.profileId === id))
-      .filter((profile): profile is BrowserProfile => !!profile && profile.running)
+    const selectedRunningTargets = getSelectedRunningProfiles()
+    const runningTargets = orderTilingTargetsForInputSync(
+      selectedRunningTargets,
+      inputSyncStatus?.masterProfileId,
+      inputSyncStatus?.running === true,
+    )
     if (runningTargets.length === 0) {
       toast.warning('没有已选的运行实例')
       return
@@ -278,6 +361,7 @@ export function BrowserListPage() {
           const more = failureMessages.length > preview.length ? `\n另有 ${failureMessages.length - preview.length} 个实例平铺失败。` : ''
           toast.error(`以下实例平铺失败：\n${preview.join('\n')}${more}`)
         }
+        await restoreInputSyncMasterFocusAfterTiling(runningTargets)
         await loadProfiles({ silent: true, syncRuntimeState: true })
         return
       }
@@ -311,16 +395,29 @@ export function BrowserListPage() {
       const more = failureMessages.length > preview.length ? `\n另有 ${failureMessages.length - preview.length} 个实例平铺失败。` : ''
       toast.error(`以下实例平铺失败：\n${preview.join('\n')}${more}`)
     }
+    await restoreInputSyncMasterFocusAfterTiling(runningTargets)
     await loadProfiles({ silent: true, syncRuntimeState: true })
   }
 
-  const handleStartInputSync = async () => {
-    const runningTargets = profiles.filter(profile => selectedIds.has(profile.profileId) && profile.running)
+  const handleOpenInputSyncDialog = () => {
+    const runningTargets = getSelectedRunningProfiles()
     if (runningTargets.length < 2) {
       toast.warning('请至少选择 2 个运行中的实例')
       return
     }
-    const [master, ...targets] = runningTargets
+    const selectedMaster = runningTargets.find(profile => profile.profileId === inputSyncMasterId) || runningTargets[0]
+    setInputSyncMasterId(selectedMaster.profileId)
+    setInputSyncMasterDialogOpen(true)
+  }
+
+  const handleStartInputSync = async () => {
+    const runningTargets = getSelectedRunningProfiles()
+    if (runningTargets.length < 2) {
+      toast.warning('请至少选择 2 个运行中的实例')
+      return
+    }
+    const master = runningTargets.find(profile => profile.profileId === inputSyncMasterId) || runningTargets[0]
+    const targets = runningTargets.filter(profile => profile.profileId !== master.profileId)
     setInputSyncLoading(true)
     try {
       const status = await startBrowserInputSync({
@@ -328,12 +425,16 @@ export function BrowserListPage() {
         targetProfileIds: targets.map(profile => profile.profileId),
         mode: 'page',
       })
-      setInputSyncStatus(status)
+      applyInputSyncStatus(status)
+      setInputSyncMasterDialogOpen(false)
       const readyCount = status.targets.filter(target => target.ready).length
       toast.success(`输入同步已开启：主控 ${master.profileName}，目标 ${readyCount} 个`)
-      const warnings = status.targets.filter(target => target.warning)
+      const warnings = status.targets.filter(target => target.warning || target.paused)
       if (warnings.length > 0) {
-        const preview = warnings.slice(0, 3).map(target => `${target.profileName || target.profileId}：${target.warning}`)
+        const preview = warnings.slice(0, 3).map(target => {
+          const message = target.paused ? `已暂停：${target.pauseReason || target.warning || '需要人工处理'}` : target.warning
+          return `${target.profileName || target.profileId}：${message}`
+        })
         const more = warnings.length > preview.length ? `\n另有 ${warnings.length - preview.length} 个目标不可用。` : ''
         toast.warning(`部分目标未加入同步：\n${preview.join('\n')}${more}`)
       }
@@ -348,10 +449,42 @@ export function BrowserListPage() {
     setInputSyncLoading(true)
     try {
       const status = await stopBrowserInputSync()
-      setInputSyncStatus(status)
+      applyInputSyncStatus(status)
       toast.success('输入同步已停止')
     } catch (error: any) {
       toast.error(error?.message || '输入同步停止失败')
+    } finally {
+      setInputSyncLoading(false)
+    }
+  }
+
+  const handleResumeInputSyncTarget = async (profileId: string) => {
+    setInputSyncLoading(true)
+    try {
+      const status = await resumeBrowserInputSyncTarget(profileId)
+      applyInputSyncStatus(status)
+      toast.success('已尝试恢复该从浏览器')
+    } catch (error: any) {
+      toast.warning(error?.message || '恢复从浏览器失败')
+      try {
+        applyInputSyncStatus(await fetchBrowserInputSyncStatus())
+      } catch {}
+    } finally {
+      setInputSyncLoading(false)
+    }
+  }
+
+  const handleResumeRecoverableInputSyncTargets = async () => {
+    setInputSyncLoading(true)
+    try {
+      const status = await resumeRecoverableBrowserInputSyncTargets()
+      applyInputSyncStatus(status)
+      toast.success('已尝试恢复可恢复的从浏览器')
+    } catch (error: any) {
+      toast.warning(error?.message || '恢复可恢复目标失败')
+      try {
+        applyInputSyncStatus(await fetchBrowserInputSyncStatus())
+      } catch {}
     } finally {
       setInputSyncLoading(false)
     }
@@ -363,7 +496,7 @@ export function BrowserListPage() {
     setInputSyncLoading(true)
     try {
       const status = await runBrowserInputSyncSpecialMode()
-      setInputSyncStatus(status)
+      applyInputSyncStatus(status)
       toast.success('窗口级同步已完成')
     } catch (error: any) {
       toast.warning(error?.message || '窗口级同步暂不可用')
@@ -592,9 +725,17 @@ export function BrowserListPage() {
   }
 
   const proxyErrorCount = proxies.filter(proxy => proxy.lastTestedAt && proxy.lastTestOk === false).length
-  const selectedRunningCount = profiles.filter(profile => selectedIds.has(profile.profileId) && profile.running).length
+  const selectedRunningProfiles = getSelectedRunningProfiles()
+  const selectedRunningCount = selectedRunningProfiles.length
+  const resolvedInputSyncMaster = selectedRunningProfiles.find(profile => profile.profileId === inputSyncMasterId) || selectedRunningProfiles[0] || null
   const inputSyncRunning = inputSyncStatus?.running === true
   const inputSyncReadyTargets = inputSyncStatus?.targets?.filter(target => target.ready).length || 0
+  const inputSyncPausedTargets = inputSyncStatus?.targets?.filter(target => target.paused) || []
+  const inputSyncRecoverablePausedTargets = inputSyncPausedTargets.filter(target => target.recoverable)
+  const inputSyncPausedTitle = inputSyncPausedTargets
+    .slice(0, 5)
+    .map(target => `${target.profileName || target.profileId}：${target.pauseReason || target.warning || '已暂停'}`)
+    .join('\n')
 
   return (
     <div className="h-full overflow-auto pb-5 animate-fade-in">
@@ -626,7 +767,7 @@ export function BrowserListPage() {
           onDeselectAll={handleDeselectAll}
           onBatchStart={handleBatchStart}
           onRetileRunning={handleRetileRunning}
-          onStartInputSync={() => { void handleStartInputSync() }}
+          onStartInputSync={handleOpenInputSyncDialog}
           onStopInputSync={() => { void handleStopInputSync() }}
           onRunSpecialInputSync={() => { void handleRunSpecialInputSync() }}
           onBatchStop={handleBatchStop}
@@ -647,6 +788,16 @@ export function BrowserListPage() {
             <span className="font-semibold text-[var(--color-text-primary)]">输入同步运行中</span>
             <span>主控：{inputSyncStatus?.masterName || inputSyncStatus?.masterProfileId}</span>
             <span>目标：{inputSyncReadyTargets}</span>
+            {inputSyncPausedTargets.length > 0 && (
+              <button
+                type="button"
+                className="rounded-md px-1.5 py-0.5 text-[var(--color-warning)] hover:bg-[var(--color-bg-muted)]"
+                title={inputSyncPausedTitle}
+                onClick={() => setInputSyncPausedDialogOpen(true)}
+              >
+                暂停：{inputSyncPausedTargets.length}
+              </button>
+            )}
             <span>事件：{inputSyncStatus?.eventCount || 0}</span>
             {inputSyncStatus?.lastEventAt && <span>最近：{new Date(inputSyncStatus.lastEventAt).toLocaleTimeString()}</span>}
           </div>
@@ -711,6 +862,129 @@ export function BrowserListPage() {
         profile={extensionModal.profile}
         onClose={closeExtensionModal}
       />
+
+      <Modal
+        open={inputSyncMasterDialogOpen}
+        onClose={() => {
+          if (!inputSyncLoading) setInputSyncMasterDialogOpen(false)
+        }}
+        title="选择主控浏览器"
+        width="520px"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setInputSyncMasterDialogOpen(false)}
+              disabled={inputSyncLoading}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={() => { void handleStartInputSync() }}
+              loading={inputSyncLoading}
+              disabled={!resolvedInputSyncMaster || selectedRunningProfiles.length < 2}
+            >
+              开始同步
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-2">
+          {selectedRunningProfiles.map((profile) => {
+            const selected = resolvedInputSyncMaster?.profileId === profile.profileId
+            return (
+              <label
+                key={profile.profileId}
+                className={`flex min-h-[44px] cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                  selected
+                    ? 'border-[var(--color-accent)] bg-[var(--color-accent-muted)] text-[var(--color-text-primary)]'
+                    : 'border-[var(--color-border-muted)] bg-[var(--color-bg-surface)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)]'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="input-sync-master"
+                  className="h-4 w-4 shrink-0 accent-[var(--color-accent)]"
+                  checked={selected}
+                  disabled={inputSyncLoading}
+                  onChange={() => setInputSyncMasterId(profile.profileId)}
+                />
+                <span className="min-w-0 flex-1 truncate font-semibold">{profile.profileName || profile.profileId}</span>
+                <span className="shrink-0 rounded-md bg-[var(--color-bg-muted)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--color-text-muted)]">
+                  {profile.debugPort > 0 ? `:${profile.debugPort}` : 'CDP'}
+                </span>
+              </label>
+            )
+          })}
+        </div>
+      </Modal>
+
+      <Modal
+        open={inputSyncPausedDialogOpen}
+        onClose={() => setInputSyncPausedDialogOpen(false)}
+        title="输入同步暂停目标"
+        width="680px"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setInputSyncPausedDialogOpen(false)}>
+              关闭
+            </Button>
+            <Button
+              onClick={() => { void handleResumeRecoverableInputSyncTargets() }}
+              loading={inputSyncLoading}
+              disabled={inputSyncRecoverablePausedTargets.length === 0}
+            >
+              恢复可恢复目标
+            </Button>
+          </>
+        }
+      >
+        {inputSyncPausedTargets.length === 0 ? (
+          <div className="py-8 text-center text-sm text-[var(--color-text-muted)]">当前没有暂停的从浏览器</div>
+        ) : (
+          <div className="space-y-2">
+            {inputSyncPausedTargets.map((target) => {
+              const reason = target.pauseReason || target.warning || '输入同步已暂停'
+              return (
+                <div
+                  key={target.profileId}
+                  className="rounded-lg border border-[var(--color-border-muted)] bg-[var(--color-bg-surface)] px-3 py-3"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-semibold text-[var(--color-text-primary)]">{target.profileName || target.profileId}</span>
+                        <span className="rounded-md bg-[var(--color-bg-muted)] px-1.5 py-0.5 text-[11px] text-[var(--color-text-muted)]">
+                          {formatInputSyncPauseKind(target.pauseKind)}
+                        </span>
+                        <span className={target.recoverable ? 'text-xs text-[var(--color-warning)]' : 'text-xs text-[var(--color-error)]'}>
+                          {target.recoverable ? '可自动恢复' : '需要人工处理'}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{reason}</p>
+                      <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[var(--color-text-muted)]">
+                        <span>失败：{target.failureCount || 0}</span>
+                        <span>丢弃：{target.droppedActionCount || 0}</span>
+                        <span>恢复尝试：{target.recoverAttemptCount || 0}</span>
+                        {target.recoverable && <span>下次自动恢复：{formatInputSyncRecoverTime(target.nextRecoverAt)}</span>}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant={target.recoverable ? 'secondary' : 'ghost'}
+                      loading={inputSyncLoading}
+                      onClick={() => { void handleResumeInputSyncTarget(target.profileId) }}
+                      title={target.recoverable ? '立即恢复该从浏览器' : '人工处理后可手动尝试恢复'}
+                    >
+                      立即恢复
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Modal>
 
       <BrowserListDialogs
         proxyErrorModal={proxyErrorModal}

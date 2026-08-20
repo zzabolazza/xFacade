@@ -1,8 +1,10 @@
 package backend
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeInputSyncIDsDedupesAndSkipsMaster(t *testing.T) {
@@ -91,6 +93,18 @@ func TestInputSyncMouseEventToCDP(t *testing.T) {
 	}
 }
 
+func TestInputSyncCanSkipUnmappedMouseActionOnlyForHover(t *testing.T) {
+	if !inputSyncCanSkipUnmappedMouseAction(inputSyncWireEvent{Type: "mouseMoved", Buttons: 0}) {
+		t.Fatal("expected hover move without DOM target to be skippable")
+	}
+	if inputSyncCanSkipUnmappedMouseAction(inputSyncWireEvent{Type: "mouseMoved", Buttons: 1}) {
+		t.Fatal("expected drag move without DOM target to fail instead of falling back to viewport coordinates")
+	}
+	if inputSyncCanSkipUnmappedMouseAction(inputSyncWireEvent{Type: "mousePressed", Buttons: 1}) {
+		t.Fatal("expected click without DOM target to fail instead of falling back to viewport coordinates")
+	}
+}
+
 func TestInputSyncKeyUpClearsText(t *testing.T) {
 	command, ok := inputSyncEventToCDP(inputSyncWireEvent{
 		Kind:           "key",
@@ -167,5 +181,152 @@ func TestInputSyncBridgeScriptCapturesStateActions(t *testing.T) {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("expected bridge script to contain %q", needle)
 		}
+	}
+}
+
+func TestInputSyncDetectChallengeSignal(t *testing.T) {
+	tests := []struct {
+		name  string
+		url   string
+		title string
+		body  string
+	}{
+		{name: "google-sorry-url", url: "https://www.google.com/sorry/index?continue=https://example.test"},
+		{name: "recaptcha-body", body: "Please solve this reCAPTCHA challenge"},
+		{name: "human-verify-title", title: "Verify you are human"},
+		{name: "chinese-captcha", body: "请输入验证码继续"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			detected, reason := inputSyncDetectChallengeSignal(tt.url, tt.title, tt.body)
+			if !detected {
+				t.Fatalf("expected challenge signal for %#v", tt)
+			}
+			if !strings.Contains(reason, "已暂停该实例") {
+				t.Fatalf("expected pause reason, got %q", reason)
+			}
+		})
+	}
+}
+
+func TestInputSyncDetectChallengeSignalIgnoresGenericBodyMentions(t *testing.T) {
+	detected, reason := inputSyncDetectChallengeSignal(
+		"https://example.test/docs/forms",
+		"Help Center",
+		"This article explains how captcha widgets work in signup forms.",
+	)
+	if detected {
+		t.Fatalf("expected generic body mention to be ignored, got reason %q", reason)
+	}
+}
+
+func TestInputSyncPausedTargetDropsActions(t *testing.T) {
+	target := &inputSyncTarget{queue: make(chan inputSyncAction, 1)}
+	if !target.enqueueAction(inputSyncAction{Sequence: 1, Kind: "mouse"}) {
+		t.Fatal("expected active target to enqueue action")
+	}
+	target.pause("疑似验证码/风控页面")
+	if target.enqueueAction(inputSyncAction{Sequence: 2, Kind: "mouse"}) {
+		t.Fatal("expected paused target to drop action")
+	}
+	if got := target.droppedActions.Load(); got != 1 {
+		t.Fatalf("expected one dropped action, got %d", got)
+	}
+}
+
+func TestInputSyncPauseSnapshotCarriesRecoverMetadata(t *testing.T) {
+	target := &inputSyncTarget{}
+	target.pauseWithKind(inputSyncPauseKindDOMMismatch, "目标元素不存在", true)
+
+	snapshot := target.pauseSnapshot()
+	if !snapshot.paused {
+		t.Fatal("expected target to be paused")
+	}
+	if snapshot.kind != inputSyncPauseKindDOMMismatch {
+		t.Fatalf("unexpected pause kind: %s", snapshot.kind)
+	}
+	if !snapshot.recoverable {
+		t.Fatal("expected DOM mismatch pause to be recoverable")
+	}
+	if snapshot.nextRecoverAt.IsZero() {
+		t.Fatal("expected next recover time to be scheduled")
+	}
+}
+
+func TestInputSyncRecoverAttemptsStopAfterLimit(t *testing.T) {
+	target := &inputSyncTarget{}
+	now := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	target.pauseWithKind(inputSyncPauseKindCDPDisconnected, "CDP 断开", true)
+
+	for i := 1; i <= inputSyncMaxRecoverAttempts; i++ {
+		attempt, err := target.beginRecoverAttempt(false, now.Add(time.Duration(i)*time.Minute))
+		if err != nil {
+			t.Fatalf("attempt %d should start: %v", i, err)
+		}
+		if attempt != i {
+			t.Fatalf("expected attempt %d, got %d", i, attempt)
+		}
+		target.finishRecoverFailure(fmt.Errorf("still offline"), now.Add(time.Duration(i)*time.Minute))
+	}
+
+	snapshot := target.pauseSnapshot()
+	if snapshot.recoverable {
+		t.Fatal("expected target to stop automatic recovery after max attempts")
+	}
+	if snapshot.nextRecoverAt.IsZero() == false {
+		t.Fatal("expected next recover time to be cleared after max attempts")
+	}
+}
+
+func TestInputSyncReserveResyncAttemptLimitsAndCoolsDown(t *testing.T) {
+	target := &inputSyncTarget{}
+	now := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+
+	attempt, coolingDown, reason := target.reserveResyncAttempt("https://example.test/a", now)
+	if attempt != 1 || coolingDown || reason != "" {
+		t.Fatalf("unexpected first attempt: attempt=%d cooling=%t reason=%q", attempt, coolingDown, reason)
+	}
+
+	attempt, coolingDown, reason = target.reserveResyncAttempt("https://example.test/a", now.Add(time.Second))
+	if attempt != 1 || !coolingDown || reason != "" {
+		t.Fatalf("expected cooldown after first attempt: attempt=%d cooling=%t reason=%q", attempt, coolingDown, reason)
+	}
+
+	attempt, coolingDown, reason = target.reserveResyncAttempt("https://example.test/a", now.Add(inputSyncResyncCooldown+time.Second))
+	if attempt != 2 || coolingDown || reason != "" {
+		t.Fatalf("unexpected second attempt: attempt=%d cooling=%t reason=%q", attempt, coolingDown, reason)
+	}
+
+	attempt, coolingDown, reason = target.reserveResyncAttempt("https://example.test/a", now.Add(2*inputSyncResyncCooldown+time.Second))
+	if attempt != inputSyncMaxResyncTries || coolingDown || reason == "" {
+		t.Fatalf("expected pause after max attempts: attempt=%d cooling=%t reason=%q", attempt, coolingDown, reason)
+	}
+	if !target.isPaused() {
+		t.Fatal("expected target to be paused")
+	}
+	snapshot := target.pauseSnapshot()
+	if snapshot.kind != inputSyncPauseKindURLDeviation || !snapshot.recoverable {
+		t.Fatalf("expected recoverable URL deviation pause, got kind=%s recoverable=%t", snapshot.kind, snapshot.recoverable)
+	}
+}
+
+func TestInputSyncErrorNeedsReconnect(t *testing.T) {
+	if !inputSyncErrorNeedsReconnect(fmt.Errorf("websocket: close 1006 unexpected eof")) {
+		t.Fatal("expected websocket EOF to allow one reconnect")
+	}
+	if inputSyncErrorNeedsReconnect(fmt.Errorf("目标元素不存在: #email")) {
+		t.Fatal("expected DOM mismatch to avoid reconnect")
+	}
+}
+
+func TestInputSyncPauseKindForActionError(t *testing.T) {
+	if got := inputSyncPauseKindForActionError(fmt.Errorf("websocket: unexpected eof")); got != inputSyncPauseKindCDPDisconnected {
+		t.Fatalf("expected CDP pause kind, got %s", got)
+	}
+	if got := inputSyncPauseKindForActionError(fmt.Errorf("目标元素不存在或不可见: button")); got != inputSyncPauseKindDOMMismatch {
+		t.Fatalf("expected DOM pause kind, got %s", got)
+	}
+	if got := inputSyncPauseKindForActionError(fmt.Errorf("unknown action failure")); got != inputSyncPauseKindActionFailures {
+		t.Fatalf("expected action failure pause kind, got %s", got)
 	}
 }

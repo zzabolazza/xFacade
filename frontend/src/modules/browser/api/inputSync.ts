@@ -42,6 +42,22 @@ export async function stopBrowserInputSync(): Promise<BrowserInputSyncStatus> {
   return stoppedStatus
 }
 
+export async function resumeBrowserInputSyncTarget(profileId: string): Promise<BrowserInputSyncStatus> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserInputSyncResumeTarget) {
+    return await bindings.BrowserInputSyncResumeTarget(profileId)
+  }
+  return stoppedStatus
+}
+
+export async function resumeRecoverableBrowserInputSyncTargets(): Promise<BrowserInputSyncStatus> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserInputSyncResumeRecoverableTargets) {
+    return await bindings.BrowserInputSyncResumeRecoverableTargets()
+  }
+  return stoppedStatus
+}
+
 export async function fetchBrowserInputSyncStatus(): Promise<BrowserInputSyncStatus> {
   const bindings: any = await getBindings()
   if (bindings?.BrowserInputSyncStatus) {
