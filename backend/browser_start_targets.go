@@ -134,6 +134,132 @@ func createBrowserStartTarget(debugPort int, url string) error {
 	return err
 }
 
+// isUnwantedExtensionStartupURL reports whether a page URL is an extension
+// welcome/options page or the chrome://extensions management UI.
+func isUnwantedExtensionStartupURL(raw string) bool {
+	u := strings.TrimSpace(strings.ToLower(raw))
+	if u == "" {
+		return false
+	}
+	if strings.HasPrefix(u, "chrome-extension://") {
+		return true
+	}
+	if u == "chrome://extensions" ||
+		strings.HasPrefix(u, "chrome://extensions/") ||
+		strings.HasPrefix(u, "chrome://extensions?") {
+		return true
+	}
+	return false
+}
+
+func listCDPPageTargets(debugPort int) ([]cdpTarget, error) {
+	body, err := cdpGetEndpointBody(debugPort, "/json")
+	if err != nil {
+		return nil, fmt.Errorf("CDP /json 请求失败: %w", err)
+	}
+	var targets []cdpTarget
+	if err := json.Unmarshal(body, &targets); err != nil {
+		return nil, fmt.Errorf("CDP targets 解析失败: %w", err)
+	}
+	pages := make([]cdpTarget, 0, len(targets))
+	for _, target := range targets {
+		if strings.EqualFold(strings.TrimSpace(target.Type), "page") {
+			pages = append(pages, target)
+		}
+	}
+	return pages, nil
+}
+
+func closeUnwantedExtensionStartupTabs(debugPort int) (int, error) {
+	if debugPort <= 0 {
+		return 0, nil
+	}
+	pages, err := listCDPPageTargets(debugPort)
+	if err != nil {
+		return 0, err
+	}
+
+	toClose := make([]cdpTarget, 0)
+	for _, page := range pages {
+		if isUnwantedExtensionStartupURL(page.Url) {
+			toClose = append(toClose, page)
+		}
+	}
+	if len(toClose) == 0 {
+		return 0, nil
+	}
+
+	if len(pages)-len(toClose) <= 0 {
+		if err := createBrowserStartTarget(debugPort, "about:blank"); err != nil {
+			return 0, fmt.Errorf("创建空白页失败: %w", err)
+		}
+	}
+
+	closed := 0
+	var firstErr error
+	for _, page := range toClose {
+		id := strings.TrimSpace(page.Id)
+		if id == "" {
+			continue
+		}
+		if _, err := cdpBrowserCallResult(debugPort, "Target.closeTarget", map[string]any{
+			"targetId": id,
+		}); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		closed++
+	}
+	if closed == 0 && firstErr != nil {
+		return 0, firstErr
+	}
+	return closed, nil
+}
+
+// scheduleUnwantedExtensionStartupTabSweep closes extension welcome / extensions
+// pages shortly after launch. With many --load-extension packages, onInstalled
+// tabs can appear several seconds later, so we sweep over ~10s without blocking start.
+func scheduleUnwantedExtensionStartupTabSweep(debugPort int) {
+	if debugPort <= 0 {
+		return
+	}
+	go func() {
+		log := logger.New("Browser")
+		// Cumulative ~10s: 0 + 1s + 1.5s + 2s + 2.5s + 3s
+		waits := []time.Duration{
+			0,
+			1 * time.Second,
+			1500 * time.Millisecond,
+			2 * time.Second,
+			2500 * time.Millisecond,
+			3 * time.Second,
+		}
+		for pass, wait := range waits {
+			if wait > 0 {
+				time.Sleep(wait)
+			}
+			closed, err := closeUnwantedExtensionStartupTabs(debugPort)
+			if err != nil {
+				log.Debug("关闭扩展启动页失败",
+					logger.F("debug_port", debugPort),
+					logger.F("pass", pass+1),
+					logger.F("error", err.Error()),
+				)
+				continue
+			}
+			if closed > 0 {
+				log.Info("已关闭扩展启动页",
+					logger.F("debug_port", debugPort),
+					logger.F("closed", closed),
+					logger.F("pass", pass+1),
+				)
+			}
+		}
+	}()
+}
+
 func openBrowserStartTargets(debugPort int, targets []string) error {
 	normalized := normalizeNonEmptyStrings(targets)
 	if len(normalized) == 0 {

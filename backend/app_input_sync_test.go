@@ -106,6 +106,132 @@ func TestInputSyncCanSkipUnmappedMouseActionOnlyForHover(t *testing.T) {
 	}
 }
 
+func TestInputSyncActionReadinessWaitsForPageBasics(t *testing.T) {
+	got := inputSyncEvaluateActionReadiness(
+		inputSyncAction{Kind: "key"},
+		"",
+		inputSyncPageActionSnapshot{url: "https://example.test", readyState: "loading", hasBody: false},
+	)
+	if got.ready || !got.waitable {
+		t.Fatalf("expected basic page loading to be waitable, got %#v", got)
+	}
+	if !strings.Contains(got.reason, "页面主体") {
+		t.Fatalf("expected body loading reason, got %q", got.reason)
+	}
+}
+
+func TestInputSyncActionReadinessDoesNotWaitBeforeTargetStartsLoading(t *testing.T) {
+	got := inputSyncEvaluateActionReadiness(
+		inputSyncAction{Kind: "key"},
+		"https://example.test/target",
+		inputSyncPageActionSnapshot{url: "https://example.test/current", readyState: "complete", hasBody: true},
+	)
+	if got.ready || got.waitable || !got.urlMismatch {
+		t.Fatalf("expected URL mismatch before loading to be terminal, got %#v", got)
+	}
+	if !strings.Contains(got.reason, "尚未开始导航") {
+		t.Fatalf("expected URL wait reason, got %q", got.reason)
+	}
+}
+
+func TestInputSyncActionReadinessWaitsAfterTargetStartsLoading(t *testing.T) {
+	got := inputSyncEvaluateActionReadiness(
+		inputSyncAction{Kind: "key"},
+		"https://example.test/target",
+		inputSyncPageActionSnapshot{url: "https://example.test/current", readyState: "loading", hasBody: true},
+	)
+	if got.ready || !got.waitable || !got.urlMismatch {
+		t.Fatalf("expected loading URL mismatch to be waitable, got %#v", got)
+	}
+}
+
+func TestInputSyncActionReadinessDoesNotWaitForCompletePageWithoutBody(t *testing.T) {
+	got := inputSyncEvaluateActionReadiness(
+		inputSyncAction{Kind: "key"},
+		"",
+		inputSyncPageActionSnapshot{url: "about:blank", readyState: "complete", hasBody: false},
+	)
+	if got.ready || got.waitable {
+		t.Fatalf("expected complete page without body to avoid loading wait, got %#v", got)
+	}
+}
+
+func TestInputSyncActionReadinessDistinguishesLoadingAndMissingSelector(t *testing.T) {
+	action := inputSyncAction{Kind: "mouse", Event: inputSyncWireEvent{Selector: "#submit"}}
+	loading := inputSyncEvaluateActionReadiness(
+		action,
+		"",
+		inputSyncPageActionSnapshot{
+			url:             "https://example.test",
+			readyState:      "interactive",
+			hasBody:         true,
+			selectorChecked: true,
+		},
+	)
+	if loading.ready || !loading.waitable {
+		t.Fatalf("expected missing selector before complete to be waitable, got %#v", loading)
+	}
+
+	complete := inputSyncEvaluateActionReadiness(
+		action,
+		"",
+		inputSyncPageActionSnapshot{
+			url:             "https://example.test",
+			readyState:      "complete",
+			hasBody:         true,
+			selectorChecked: true,
+		},
+	)
+	if complete.ready || complete.waitable {
+		t.Fatalf("expected missing selector after complete to be terminal, got %#v", complete)
+	}
+	if complete.reason != "目标元素不存在" {
+		t.Fatalf("unexpected terminal selector reason: %q", complete.reason)
+	}
+}
+
+func TestInputSyncActionReadinessWaitsForInputWritableUntilComplete(t *testing.T) {
+	action := inputSyncAction{Kind: "input", Event: inputSyncWireEvent{Selector: "#email"}}
+	loading := inputSyncEvaluateActionReadiness(
+		action,
+		"",
+		inputSyncPageActionSnapshot{
+			url:             "https://example.test",
+			readyState:      "interactive",
+			hasBody:         true,
+			selectorChecked: true,
+			selectorFound:   true,
+			selectorVisible: true,
+		},
+	)
+	if loading.ready || !loading.waitable {
+		t.Fatalf("expected unwritable input before complete to be waitable, got %#v", loading)
+	}
+
+	ready := inputSyncEvaluateActionReadiness(
+		action,
+		"",
+		inputSyncPageActionSnapshot{
+			url:              "https://example.test",
+			readyState:       "complete",
+			hasBody:          true,
+			selectorChecked:  true,
+			selectorFound:    true,
+			selectorVisible:  true,
+			selectorWritable: true,
+		},
+	)
+	if !ready.ready || ready.waitable {
+		t.Fatalf("expected writable input to be ready, got %#v", ready)
+	}
+}
+
+func TestInputSyncActionNeedsReadinessSkipsUnmappedHover(t *testing.T) {
+	if inputSyncActionNeedsReadiness(inputSyncAction{Kind: "mouse", Event: inputSyncWireEvent{Type: "mouseMoved", Buttons: 0}}) {
+		t.Fatal("expected plain hover without DOM target to skip readiness waiting")
+	}
+}
+
 func TestInputSyncKeyUpClearsText(t *testing.T) {
 	command, ok := inputSyncEventToCDP(inputSyncWireEvent{
 		Kind:           "key",
@@ -359,22 +485,22 @@ func TestInputSyncReserveResyncAttemptLimitsAndCoolsDown(t *testing.T) {
 	target := &inputSyncTarget{}
 	now := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 
-	attempt, coolingDown, reason := target.reserveResyncAttempt("https://example.test/a", now)
+	attempt, coolingDown, reason := target.reserveResyncAttempt("source-a", "https://example.test/a", now)
 	if attempt != 1 || coolingDown || reason != "" {
 		t.Fatalf("unexpected first attempt: attempt=%d cooling=%t reason=%q", attempt, coolingDown, reason)
 	}
 
-	attempt, coolingDown, reason = target.reserveResyncAttempt("https://example.test/a", now.Add(time.Second))
+	attempt, coolingDown, reason = target.reserveResyncAttempt("source-a", "https://example.test/a", now.Add(time.Second))
 	if attempt != 1 || !coolingDown || reason != "" {
 		t.Fatalf("expected cooldown after first attempt: attempt=%d cooling=%t reason=%q", attempt, coolingDown, reason)
 	}
 
-	attempt, coolingDown, reason = target.reserveResyncAttempt("https://example.test/a", now.Add(inputSyncResyncCooldown+time.Second))
+	attempt, coolingDown, reason = target.reserveResyncAttempt("source-a", "https://example.test/a", now.Add(inputSyncResyncCooldown+time.Second))
 	if attempt != 2 || coolingDown || reason != "" {
 		t.Fatalf("unexpected second attempt: attempt=%d cooling=%t reason=%q", attempt, coolingDown, reason)
 	}
 
-	attempt, coolingDown, reason = target.reserveResyncAttempt("https://example.test/a", now.Add(2*inputSyncResyncCooldown+time.Second))
+	attempt, coolingDown, reason = target.reserveResyncAttempt("source-a", "https://example.test/a", now.Add(2*inputSyncResyncCooldown+time.Second))
 	if attempt != inputSyncMaxResyncTries || coolingDown || reason == "" {
 		t.Fatalf("expected pause after max attempts: attempt=%d cooling=%t reason=%q", attempt, coolingDown, reason)
 	}
@@ -387,9 +513,159 @@ func TestInputSyncReserveResyncAttemptLimitsAndCoolsDown(t *testing.T) {
 	}
 }
 
+func TestInputSyncTabClosedClearsExpectedURLIsolation(t *testing.T) {
+	clientA := &inputSyncPageClient{targetID: "page-a", done: make(chan struct{})}
+	clientB := &inputSyncPageClient{targetID: "page-b", done: make(chan struct{})}
+	target := &inputSyncTarget{
+		clients:  make(map[string]*inputSyncPageClient),
+		tabState: make(map[string]*inputSyncTabState),
+	}
+	target.bindClient("source-a", clientA)
+	target.setExpectedURL("source-a", "https://a.test")
+	target.bindClient("source-b", clientB)
+	target.setExpectedURL("source-b", "https://b.test")
+
+	if err := target.applyTabAction(inputSyncAction{
+		Kind:           "tab",
+		Type:           "closed",
+		SourceTargetID: "source-b",
+	}); err != nil {
+		t.Fatalf("close tab failed: %v", err)
+	}
+
+	if got := target.expectedURLFor("source-a"); got != "https://a.test" {
+		t.Fatalf("expected source-a URL preserved, got %q", got)
+	}
+	if got := target.expectedURLFor("source-b"); got != "" {
+		t.Fatalf("expected source-b URL cleared, got %q", got)
+	}
+	if got := target.expectedURLSnapshot(); got != "https://a.test" {
+		t.Fatalf("expected mirrored active URL to become source-a, got %q", got)
+	}
+	entries := target.clientSourceSnapshot()
+	if len(entries) != 1 || entries[0].sourceID != "source-a" {
+		t.Fatalf("expected only source-a remaining for verifyState, got %#v", entries)
+	}
+}
+
+func TestInputSyncResidualNavigationForClosedTabIsDropped(t *testing.T) {
+	clientA := &inputSyncPageClient{targetID: "page-a", done: make(chan struct{})}
+	clientB := &inputSyncPageClient{targetID: "page-b", done: make(chan struct{})}
+	target := &inputSyncTarget{
+		clients:  make(map[string]*inputSyncPageClient),
+		tabState: make(map[string]*inputSyncTabState),
+	}
+	target.bindClient("source-a", clientA)
+	target.setExpectedURL("source-a", "https://a.test")
+	target.bindClient("source-b", clientB)
+	target.setExpectedURL("source-b", "https://b.test")
+	_ = target.applyTabAction(inputSyncAction{
+		Kind:           "tab",
+		Type:           "closed",
+		SourceTargetID: "source-b",
+	})
+
+	session := &inputSyncSession{id: "session-1"}
+	target.applyQueuedAction(context.Background(), session, inputSyncAction{
+		Sequence:       99,
+		Kind:           "navigation",
+		Type:           "navigated",
+		SourceTargetID: "source-b",
+		Event:          inputSyncWireEvent{URL: "https://b.test/closed"},
+	})
+
+	if got := target.expectedURLFor("source-a"); got != "https://a.test" {
+		t.Fatalf("expected source-a URL untouched, got %q", got)
+	}
+	if got := target.expectedURLFor("source-b"); got != "" {
+		t.Fatalf("expected closed source URL to stay empty, got %q", got)
+	}
+	if got := target.expectedURLSnapshot(); got != "https://a.test" {
+		t.Fatalf("expected active mirrored URL unchanged, got %q", got)
+	}
+	if target.appliedActions.Load() != 0 {
+		t.Fatalf("expected residual navigation not applied, got %d", target.appliedActions.Load())
+	}
+}
+
+func TestInputSyncClientForActionDoesNotFallbackAfterClose(t *testing.T) {
+	clientA := &inputSyncPageClient{targetID: "page-a", done: make(chan struct{})}
+	clientB := &inputSyncPageClient{targetID: "page-b", done: make(chan struct{})}
+	target := &inputSyncTarget{clients: make(map[string]*inputSyncPageClient)}
+	target.bindClient("source-a", clientA)
+	target.bindClient("source-b", clientB)
+	_ = target.unbindClient("source-b")
+
+	if got := target.clientForAction(inputSyncAction{SourceTargetID: "source-b"}); got != nil {
+		t.Fatal("expected closed source mapping to return nil instead of remaining tab")
+	}
+	if got := target.clientForAction(inputSyncAction{SourceTargetID: "source-a"}); got != clientA {
+		t.Fatal("expected live source mapping to still resolve")
+	}
+}
+
+func TestInputSyncMatchLivePageRequiresPreferredID(t *testing.T) {
+	live := []inputSyncPageTarget{
+		{id: "page-1", url: "https://one.test"},
+		{id: "page-2", url: "https://two.test"},
+	}
+	matched, ok := inputSyncMatchLivePage(live, "page-2")
+	if !ok || matched.id != "page-2" {
+		t.Fatalf("expected exact match for page-2, got ok=%t id=%q", ok, matched.id)
+	}
+	if _, ok := inputSyncMatchLivePage(live, "missing"); ok {
+		t.Fatal("expected missing preferred id to fail without falling back to [0]")
+	}
+	if _, ok := inputSyncMatchLivePage(live, ""); ok {
+		t.Fatal("expected empty preferred id to fail")
+	}
+}
+
+func TestInputSyncPickLivePageForReconnectSingleTabFallback(t *testing.T) {
+	live := []inputSyncPageTarget{{id: "only-page", url: "https://only.test"}}
+	matched, ok := inputSyncPickLivePageForReconnect(live, "stale-id", 1)
+	if !ok || matched.id != "only-page" {
+		t.Fatalf("expected single-tab fallback, got ok=%t id=%q", ok, matched.id)
+	}
+
+	multi := []inputSyncPageTarget{
+		{id: "page-1", url: "https://one.test"},
+		{id: "page-2", url: "https://two.test"},
+	}
+	if _, ok := inputSyncPickLivePageForReconnect(multi, "stale-id", 2); ok {
+		t.Fatal("expected multi-tab reconnect without preferred id to refuse stealing another page")
+	}
+	if _, ok := inputSyncPickLivePageForReconnect(multi, "stale-id", 1); ok {
+		t.Fatal("expected single mapping with multiple live pages to refuse fallback")
+	}
+}
+
+func TestInputSyncReplaceClientForSourceKeepsSibling(t *testing.T) {
+	clientA := &inputSyncPageClient{targetID: "page-a", done: make(chan struct{})}
+	clientB := &inputSyncPageClient{targetID: "page-b", done: make(chan struct{})}
+	nextA := &inputSyncPageClient{targetID: "page-a-reconnected", done: make(chan struct{})}
+	target := &inputSyncTarget{clients: make(map[string]*inputSyncPageClient)}
+	target.bindClient("source-a", clientA)
+	target.bindClient("source-b", clientB)
+
+	previous := target.replaceClientForSource("source-a", nextA)
+	if previous != clientA {
+		t.Fatal("expected previous source-a client to be returned")
+	}
+	if got := target.exactClientForSource("source-a"); got != nextA {
+		t.Fatal("expected source-a to be replaced")
+	}
+	if got := target.exactClientForSource("source-b"); got != clientB {
+		t.Fatal("expected source-b client to remain unchanged")
+	}
+}
+
 func TestInputSyncErrorNeedsReconnect(t *testing.T) {
 	if !inputSyncErrorNeedsReconnect(fmt.Errorf("websocket: close 1006 unexpected eof")) {
 		t.Fatal("expected websocket EOF to allow one reconnect")
+	}
+	if inputSyncErrorNeedsReconnect(fmt.Errorf("execution context was destroyed, most likely because of a navigation")) {
+		t.Fatal("expected page loading errors to avoid reconnect")
 	}
 	if inputSyncErrorNeedsReconnect(fmt.Errorf("目标元素不存在: #email")) {
 		t.Fatal("expected DOM mismatch to avoid reconnect")
@@ -405,5 +681,134 @@ func TestInputSyncPauseKindForActionError(t *testing.T) {
 	}
 	if got := inputSyncPauseKindForActionError(fmt.Errorf("unknown action failure")); got != inputSyncPauseKindActionFailures {
 		t.Fatalf("expected action failure pause kind, got %s", got)
+	}
+}
+
+func TestInputSyncPlanTabActionSemantics(t *testing.T) {
+	cases := []struct {
+		name         string
+		actionType   string
+		hasClient    bool
+		clientClosed bool
+		want         inputSyncTabPlan
+	}{
+		{name: "activated without mapping ignores", actionType: "activated", hasClient: false, want: inputSyncTabPlanIgnore},
+		{name: "activated with closed client reconnects", actionType: "activated", hasClient: true, clientClosed: true, want: inputSyncTabPlanReconnect},
+		{name: "activated with live client binds", actionType: "activated", hasClient: true, clientClosed: false, want: inputSyncTabPlanBind},
+		{name: "created without mapping creates", actionType: "created", hasClient: false, want: inputSyncTabPlanCreate},
+		{name: "created with closed client reconnects", actionType: "created", hasClient: true, clientClosed: true, want: inputSyncTabPlanReconnect},
+		{name: "created with live client binds", actionType: "created", hasClient: true, clientClosed: false, want: inputSyncTabPlanBind},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := inputSyncPlanTabAction(tc.actionType, tc.hasClient, tc.clientClosed)
+			if got != tc.want {
+				t.Fatalf("got plan %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInputSyncUnmappedTabsToClose(t *testing.T) {
+	live := []inputSyncPageTarget{
+		{id: "mapped-a"},
+		{id: "popup"},
+		{id: "user-opened"},
+		{id: ""},
+	}
+	mapped := map[string]struct{}{"mapped-a": {}}
+	got := inputSyncUnmappedTabsToClose(live, mapped)
+	if len(got) != 2 || got[0] != "popup" || got[1] != "user-opened" {
+		t.Fatalf("expected popup and user-opened, got %#v", got)
+	}
+
+	all := inputSyncUnmappedTabsToClose(live, nil)
+	if len(all) != 3 || all[0] != "mapped-a" || all[1] != "popup" || all[2] != "user-opened" {
+		t.Fatalf("expected all non-empty live ids when mapped empty, got %#v", all)
+	}
+
+	none := inputSyncUnmappedTabsToClose(live, map[string]struct{}{
+		"mapped-a":    {},
+		"popup":       {},
+		"user-opened": {},
+	})
+	if len(none) != 0 {
+		t.Fatalf("expected no tabs to close, got %#v", none)
+	}
+}
+
+func TestInputSyncActivateNilClientIsSafe(t *testing.T) {
+	var client *inputSyncPageClient
+	if err := client.Activate(); err != nil {
+		t.Fatalf("nil Activate should be safe, got %v", err)
+	}
+}
+
+func TestInputSyncAnnouncedTabDedupesCreated(t *testing.T) {
+	session := &inputSyncSession{announcedTabs: make(map[string]struct{})}
+	if !session.shouldAnnounceTab("master-tab-1") {
+		t.Fatal("expected first announce to succeed")
+	}
+	if session.shouldAnnounceTab("master-tab-1") {
+		t.Fatal("expected duplicate announce to be suppressed")
+	}
+	session.unmarkAnnouncedTab("master-tab-1")
+	if !session.shouldAnnounceTab("master-tab-1") {
+		t.Fatal("expected announce after closed to succeed again")
+	}
+}
+
+func TestInputSyncActivatedWithoutMappingDoesNotCreate(t *testing.T) {
+	target := &inputSyncTarget{
+		profileID: "target",
+		name:      "Target",
+		debugPort: 1,
+		clients:   make(map[string]*inputSyncPageClient),
+		tabState:  make(map[string]*inputSyncTabState),
+		ownedTabs: make(map[string]struct{}),
+	}
+	err := target.applyTabAction(inputSyncAction{
+		Kind:           "tab",
+		Type:           "activated",
+		SourceTargetID: "missing-source",
+		Event:          inputSyncWireEvent{URL: "https://example.test/activated"},
+	})
+	if err != nil {
+		t.Fatalf("expected activated without mapping to be ignored, got %v", err)
+	}
+	if target.exactClientForSource("missing-source") != nil {
+		t.Fatal("expected activated without mapping to leave clients empty")
+	}
+	if len(target.ownedTabs) != 0 {
+		t.Fatalf("expected no owned tabs, got %#v", target.ownedTabs)
+	}
+}
+
+func TestInputSyncTabActionFailureDoesNotReconnectRetry(t *testing.T) {
+	client := &inputSyncPageClient{targetID: "page-1", done: make(chan struct{})}
+	target := &inputSyncTarget{
+		profileID: "target",
+		name:      "Target",
+		debugPort: 1,
+		clients:   make(map[string]*inputSyncPageClient),
+		tabState:  make(map[string]*inputSyncTabState),
+		ownedTabs: make(map[string]struct{}),
+	}
+	target.bindClient("source-1", client)
+	client.Close()
+
+	session := &inputSyncSession{id: "session-1"}
+	target.applyQueuedAction(context.Background(), session, inputSyncAction{
+		Sequence:       7,
+		Kind:           "tab",
+		Type:           "activated",
+		SourceTargetID: "source-1",
+		Event:          inputSyncWireEvent{URL: "https://example.test/a"},
+	})
+	if got := target.failedActions.Load(); got != 1 {
+		t.Fatalf("expected exactly one recorded failure without reconnect retry, got %d", got)
+	}
+	if got := target.appliedActions.Load(); got != 0 {
+		t.Fatalf("expected tab reconnect failure not to count as applied, got %d", got)
 	}
 }

@@ -167,6 +167,7 @@ func (a *App) waitBrowserDebugReadyAsync(profileId string, debugPort int, timeou
 		snapshot = warningSnapshot
 		changed = changed || warningChanged
 	}
+	scheduleUnwantedExtensionStartupTabSweep(debugPort)
 	if !changed {
 		return
 	}

@@ -31,6 +31,7 @@ func (a *App) waitBrowserProcess(profileId string, monitor *browserProcessMonito
 			snapshot = warningSnapshot
 			changed = changed || warningChanged
 		}
+		scheduleUnwantedExtensionStartupTabSweep(debugPort)
 		if snapshot != nil && changed {
 			log.Info("浏览器启动器进程退出后，调试接口延迟就绪",
 				logger.F("profile_id", profileId),

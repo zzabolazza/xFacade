@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,12 +37,15 @@ const (
 	inputSyncMaxActionErrors = 5
 	inputSyncMaxResyncTries  = 2
 	inputSyncResyncCooldown  = 30 * time.Second
+	inputSyncPageReadyWait   = 60 * time.Second
+	inputSyncPageReadyPoll   = 250 * time.Millisecond
 
 	inputSyncPauseKindChallenge       = "challenge"
 	inputSyncPauseKindCDPDisconnected = "cdp_disconnected"
 	inputSyncPauseKindDOMMismatch     = "dom_mismatch"
 	inputSyncPauseKindURLDeviation    = "url_deviation"
 	inputSyncPauseKindActionFailures  = "action_failures"
+	inputSyncPauseKindPageNotReady    = "page_not_ready"
 
 	inputSyncRecoverCheckInterval = 1 * time.Second
 	inputSyncMaxRecoverAttempts   = 5
@@ -62,19 +66,22 @@ type BrowserInputSyncStartRequest struct {
 }
 
 type BrowserInputSyncTargetStatus struct {
-	ProfileId           string `json:"profileId"`
-	ProfileName         string `json:"profileName"`
-	DebugPort           int    `json:"debugPort"`
-	Ready               bool   `json:"ready"`
-	Paused              bool   `json:"paused"`
-	PauseReason         string `json:"pauseReason,omitempty"`
-	PauseKind           string `json:"pauseKind,omitempty"`
-	Recoverable         bool   `json:"recoverable"`
-	RecoverAttemptCount int    `json:"recoverAttemptCount"`
-	NextRecoverAt       string `json:"nextRecoverAt,omitempty"`
-	FailureCount        int    `json:"failureCount"`
-	DroppedActionCount  int64  `json:"droppedActionCount"`
-	Warning             string `json:"warning,omitempty"`
+	ProfileId             string `json:"profileId"`
+	ProfileName           string `json:"profileName"`
+	DebugPort             int    `json:"debugPort"`
+	Ready                 bool   `json:"ready"`
+	Paused                bool   `json:"paused"`
+	PauseReason           string `json:"pauseReason,omitempty"`
+	PauseKind             string `json:"pauseKind,omitempty"`
+	Recoverable           bool   `json:"recoverable"`
+	RecoverAttemptCount   int    `json:"recoverAttemptCount"`
+	NextRecoverAt         string `json:"nextRecoverAt,omitempty"`
+	FailureCount          int    `json:"failureCount"`
+	DroppedActionCount    int64  `json:"droppedActionCount"`
+	WaitingForPageLoad    bool   `json:"waitingForPageLoad"`
+	PageLoadWaitReason    string `json:"pageLoadWaitReason,omitempty"`
+	PageLoadWaitStartedAt string `json:"pageLoadWaitStartedAt,omitempty"`
+	Warning               string `json:"warning,omitempty"`
 }
 
 type BrowserInputSyncStatus struct {
@@ -110,6 +117,7 @@ type inputSyncSession struct {
 	masterDebugPort  int
 	master           *inputSyncPageClient
 	masterClients    map[string]*inputSyncPageClient
+	announcedTabs    map[string]struct{}
 	masterEvents     chan inputSyncWireEvent
 	targets          []*inputSyncTarget
 	cancel           context.CancelFunc
@@ -121,6 +129,13 @@ type inputSyncSession struct {
 	warning          string
 }
 
+type inputSyncTabState struct {
+	expectedURL    string
+	resyncURL      string
+	resyncFailures int
+	lastResyncAt   time.Time
+}
+
 type inputSyncTarget struct {
 	mu              sync.Mutex
 	profileID       string
@@ -129,6 +144,8 @@ type inputSyncTarget struct {
 	viewport        inputSyncViewport
 	client          *inputSyncPageClient
 	clients         map[string]*inputSyncPageClient
+	tabState        map[string]*inputSyncTabState
+	ownedTabs       map[string]struct{}
 	activeSourceID  string
 	queue           chan inputSyncAction
 	warning         string
@@ -145,6 +162,9 @@ type inputSyncTarget struct {
 	resyncURL       string
 	resyncFailures  int
 	lastResyncAt    time.Time
+	waitingForLoad  bool
+	loadWaitReason  string
+	loadWaitStarted time.Time
 	appliedActions  atomic.Int64
 	failedActions   atomic.Int64
 	droppedActions  atomic.Int64
@@ -160,6 +180,9 @@ type inputSyncTargetPauseSnapshot struct {
 	recoverAttempts int
 	nextRecoverAt   time.Time
 	recovering      bool
+	waitingForLoad  bool
+	loadWaitReason  string
+	loadWaitStarted time.Time
 }
 
 type inputSyncProfileRuntime struct {
@@ -226,6 +249,49 @@ type inputSyncAction struct {
 	SourceTargetID string
 	Event          inputSyncWireEvent
 	CreatedAt      time.Time
+}
+
+type inputSyncPageActionSnapshot struct {
+	url              string
+	readyState       string
+	hasBody          bool
+	selectorChecked  bool
+	selectorFound    bool
+	selectorVisible  bool
+	selectorWritable bool
+}
+
+type inputSyncActionReadiness struct {
+	ready       bool
+	waitable    bool
+	urlMismatch bool
+	reason      string
+	url         string
+	readyState  string
+}
+
+type inputSyncPageNotReadyError struct {
+	reason string
+}
+
+func (e inputSyncPageNotReadyError) Error() string {
+	reason := strings.TrimSpace(e.reason)
+	if reason == "" {
+		reason = "页面长时间未加载完成"
+	}
+	return reason
+}
+
+type inputSyncActionSkippedError struct {
+	reason string
+}
+
+func (e inputSyncActionSkippedError) Error() string {
+	reason := strings.TrimSpace(e.reason)
+	if reason == "" {
+		reason = "Action 已跳过"
+	}
+	return reason
 }
 
 type inputSyncPageClient struct {
@@ -354,6 +420,7 @@ func (m *inputSyncManager) Start(req BrowserInputSyncStartRequest) (*BrowserInpu
 		masterDebugPort:  master.debugPort,
 		cancel:           cancel,
 		masterClients:    make(map[string]*inputSyncPageClient),
+		announcedTabs:    make(map[string]struct{}),
 		masterEvents:     make(chan inputSyncWireEvent, 512),
 		targets:          make([]*inputSyncTarget, 0, len(targets)),
 	}
@@ -392,6 +459,8 @@ func (m *inputSyncManager) Start(req BrowserInputSyncStartRequest) (*BrowserInpu
 			name:      targetProfile.name,
 			debugPort: targetProfile.debugPort,
 			clients:   make(map[string]*inputSyncPageClient),
+			tabState:  make(map[string]*inputSyncTabState),
+			ownedTabs: make(map[string]struct{}),
 			queue:     make(chan inputSyncAction, inputSyncActionQueueSize),
 		}
 		if targetProfile.warning != "" {
@@ -445,6 +514,7 @@ func (m *inputSyncManager) Start(req BrowserInputSyncStartRequest) (*BrowserInpu
 		return nil, fmt.Errorf("输入同步启动失败：主控页面事件桥安装失败：%w", err)
 	}
 	session.addMasterClient(ctx, masterClient)
+	session.markAnnouncedTab(masterClient.targetID)
 	logInputSyncTrace("输入同步主控事件桥已安装",
 		logger.F("session_id", session.id),
 		logger.F("master_profile_id", session.masterProfileID),
@@ -857,6 +927,9 @@ func inputSyncErrorNeedsReconnect(err error) bool {
 	if err == nil {
 		return false
 	}
+	if inputSyncErrorLooksPageLoading(err) {
+		return false
+	}
 	message := strings.ToLower(err.Error())
 	reconnectSignals := []string{
 		"cdp connection closed",
@@ -874,6 +947,26 @@ func inputSyncErrorNeedsReconnect(err error) bool {
 		"detached",
 	}
 	for _, signal := range reconnectSignals {
+		if strings.Contains(message, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func inputSyncErrorLooksPageLoading(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	signals := []string{
+		"execution context was destroyed",
+		"cannot find context",
+		"most likely because of a navigation",
+		"frame was detached",
+		"navigating",
+	}
+	for _, signal := range signals {
 		if strings.Contains(message, signal) {
 			return true
 		}
@@ -924,6 +1017,172 @@ func inputSyncRecoverBackoffForAttempt(attempt int) time.Duration {
 		return inputSyncRecoverBackoffs[len(inputSyncRecoverBackoffs)-1]
 	}
 	return inputSyncRecoverBackoffs[attempt]
+}
+
+type inputSyncTabPlan int
+
+const (
+	inputSyncTabPlanIgnore inputSyncTabPlan = iota
+	inputSyncTabPlanBind
+	inputSyncTabPlanReconnect
+	inputSyncTabPlanCreate
+)
+
+func inputSyncPlanTabAction(actionType string, hasClient bool, clientClosed bool) inputSyncTabPlan {
+	switch strings.TrimSpace(actionType) {
+	case "created":
+		if !hasClient {
+			return inputSyncTabPlanCreate
+		}
+		if clientClosed {
+			return inputSyncTabPlanReconnect
+		}
+		return inputSyncTabPlanBind
+	case "activated":
+		if !hasClient {
+			return inputSyncTabPlanIgnore
+		}
+		if clientClosed {
+			return inputSyncTabPlanReconnect
+		}
+		return inputSyncTabPlanBind
+	default:
+		return inputSyncTabPlanIgnore
+	}
+}
+
+func inputSyncUnmappedTabsToClose(live []inputSyncPageTarget, mapped map[string]struct{}) []string {
+	out := make([]string, 0)
+	for _, page := range live {
+		id := strings.TrimSpace(page.id)
+		if id == "" {
+			continue
+		}
+		if _, ok := mapped[id]; ok {
+			continue
+		}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func inputSyncActionNeedsReadiness(action inputSyncAction) bool {
+	if action.Kind == "navigation" || action.Kind == "tab" {
+		return false
+	}
+	if action.Kind == "mouse" && inputSyncCanSkipUnmappedMouseAction(action.Event) {
+		return false
+	}
+	return action.Kind == "mouse" || action.Kind == "input" || action.Kind == "scroll" || action.Kind == "key"
+}
+
+func inputSyncSnapshotHasStartedLoading(readyState string, currentURL string, expectedURL string, hasBody bool) bool {
+	readyState = strings.ToLower(strings.TrimSpace(readyState))
+	if readyState == "loading" {
+		return true
+	}
+	expected := strings.TrimSpace(expectedURL)
+	if expected == "" {
+		return readyState == "interactive"
+	}
+	if normalizeInputSyncURL(currentURL) != normalizeInputSyncURL(expected) {
+		return false
+	}
+	return readyState == "interactive" || (readyState != "complete" && !hasBody)
+}
+
+func inputSyncEvaluateActionReadiness(action inputSyncAction, expectedURL string, snapshot inputSyncPageActionSnapshot) inputSyncActionReadiness {
+	readyState := strings.ToLower(strings.TrimSpace(snapshot.readyState))
+	currentURL := strings.TrimSpace(snapshot.url)
+	expected := strings.TrimSpace(expectedURL)
+	urlMismatch := expected != "" && normalizeInputSyncURL(currentURL) != normalizeInputSyncURL(expected)
+	loadingStarted := inputSyncSnapshotHasStartedLoading(readyState, currentURL, expected, snapshot.hasBody)
+	result := inputSyncActionReadiness{
+		url:         currentURL,
+		readyState:  readyState,
+		urlMismatch: urlMismatch,
+	}
+	pageReady := snapshot.hasBody && (readyState == "interactive" || readyState == "complete")
+	if !pageReady {
+		if loadingStarted {
+			result.waitable = true
+			if !snapshot.hasBody {
+				result.reason = "等待页面主体加载"
+			} else if readyState == "" {
+				result.reason = "等待页面状态可读"
+			} else {
+				result.reason = fmt.Sprintf("等待页面加载完成（readyState=%s）", readyState)
+			}
+			return result
+		}
+		if urlMismatch {
+			result.reason = "从浏览器尚未开始导航到主控页面"
+			return result
+		}
+		result.reason = "页面主体不存在"
+		return result
+	}
+	if urlMismatch {
+		if loadingStarted {
+			result.waitable = true
+			result.reason = "等待从浏览器导航到主控页面"
+			return result
+		}
+		result.reason = "从浏览器尚未开始导航到主控页面"
+		return result
+	}
+	selector := strings.TrimSpace(action.Event.Selector)
+	if selector == "" {
+		result.ready = true
+		return result
+	}
+	if !snapshot.selectorChecked {
+		result.ready = true
+		return result
+	}
+	if !snapshot.selectorFound {
+		if loadingStarted {
+			result.waitable = true
+			result.reason = "等待目标元素出现"
+			return result
+		}
+		result.reason = "目标元素不存在"
+		return result
+	}
+	switch action.Kind {
+	case "mouse":
+		if !snapshot.selectorVisible {
+			if loadingStarted {
+				result.waitable = true
+				result.reason = "等待目标元素可见"
+				return result
+			}
+			result.reason = "目标元素不可见"
+			return result
+		}
+	case "input":
+		if !snapshot.selectorVisible {
+			if loadingStarted {
+				result.waitable = true
+				result.reason = "等待输入目标可见"
+				return result
+			}
+			result.reason = "输入目标不可见"
+			return result
+		}
+		if !snapshot.selectorWritable {
+			if loadingStarted {
+				result.waitable = true
+				result.reason = "等待输入目标可写"
+				return result
+			}
+			result.reason = "输入目标不可写"
+			return result
+		}
+	}
+	result.ready = true
+	return result
 }
 
 func inputSyncDetectChallengeSignal(rawURL string, title string, body string) (bool, string) {
@@ -1049,20 +1308,27 @@ func (s *inputSyncSession) status() *BrowserInputSyncStatus {
 		if !pause.nextRecoverAt.IsZero() {
 			nextRecoverAt = pause.nextRecoverAt.Format(time.RFC3339)
 		}
+		pageLoadWaitStartedAt := ""
+		if !pause.loadWaitStarted.IsZero() {
+			pageLoadWaitStartedAt = pause.loadWaitStarted.Format(time.RFC3339)
+		}
 		targets = append(targets, BrowserInputSyncTargetStatus{
-			ProfileId:           target.profileID,
-			ProfileName:         target.name,
-			DebugPort:           target.debugPort,
-			Ready:               target.getClient() != nil && !pause.paused,
-			Paused:              pause.paused,
-			PauseReason:         pause.reason,
-			PauseKind:           pause.kind,
-			Recoverable:         pause.recoverable,
-			RecoverAttemptCount: pause.recoverAttempts,
-			NextRecoverAt:       nextRecoverAt,
-			FailureCount:        pause.failureCount,
-			DroppedActionCount:  target.droppedActions.Load(),
-			Warning:             inputSyncTargetStatusWarning(target.getWarning(), pause.reason, pause.lastFailedSeq),
+			ProfileId:             target.profileID,
+			ProfileName:           target.name,
+			DebugPort:             target.debugPort,
+			Ready:                 target.getClient() != nil && !pause.paused,
+			Paused:                pause.paused,
+			PauseReason:           pause.reason,
+			PauseKind:             pause.kind,
+			Recoverable:           pause.recoverable,
+			RecoverAttemptCount:   pause.recoverAttempts,
+			NextRecoverAt:         nextRecoverAt,
+			FailureCount:          pause.failureCount,
+			DroppedActionCount:    target.droppedActions.Load(),
+			WaitingForPageLoad:    pause.waitingForLoad,
+			PageLoadWaitReason:    pause.loadWaitReason,
+			PageLoadWaitStartedAt: pageLoadWaitStartedAt,
+			Warning:               inputSyncTargetStatusWarning(target.getWarning(), pause.reason, pause.lastFailedSeq),
 		})
 	}
 	status := &BrowserInputSyncStatus{
@@ -1271,61 +1537,106 @@ func (s *inputSyncSession) recoverTargetClientAndState(ctx context.Context, targ
 	profileID := target.profileID
 	name := target.name
 	debugPort := target.debugPort
-	expectedURL := strings.TrimSpace(target.expectedURL)
 	target.mu.Unlock()
 	if debugPort <= 0 {
 		return fmt.Errorf("目标调试端口不可用")
 	}
-	client, viewport, err := openInputSyncPageClient("target", profileID, name, debugPort, false)
+	livePages, err := listInputSyncPageTargets(debugPort)
 	if err != nil {
 		return err
 	}
-	clientAccepted := false
-	defer func() {
-		if !clientAccepted {
-			client.Close()
+	entries := target.clientSourceSnapshot()
+	if len(entries) == 0 {
+		client, viewport, openErr := openInputSyncPageClient("target", profileID, name, debugPort, false)
+		if openErr != nil {
+			return openErr
 		}
-	}()
-	detectCtx, detectCancel := context.WithTimeout(ctx, inputSyncCommandTimeout)
-	detected, reason, detectErr := client.DetectChallenge(detectCtx)
-	detectCancel()
-	if detectErr == nil && detected {
-		target.pauseWithKind(inputSyncPauseKindChallenge, reason, false)
-		return fmt.Errorf("%s", reason)
+		clientAccepted := false
+		defer func() {
+			if !clientAccepted {
+				client.Close()
+			}
+		}()
+		detectCtx, detectCancel := context.WithTimeout(ctx, inputSyncCommandTimeout)
+		detected, reason, detectErr := client.DetectChallenge(detectCtx)
+		detectCancel()
+		if detectErr == nil && detected {
+			target.pauseWithKind(inputSyncPauseKindChallenge, reason, false)
+			return fmt.Errorf("%s", reason)
+		}
+		previous := target.replaceClient(client)
+		clientAccepted = true
+		target.viewport = viewport
+		if previous != nil && previous != client {
+			previous.Close()
+		}
+		return nil
 	}
-	if detectErr != nil {
-		logger.New("InputSync").Debug("输入同步恢复时验证码/风控检测跳过",
-			logger.F("session_id", s.id),
-			logger.F("target_profile_id", profileID),
-			logger.F("target_name", name),
-			logger.F("target_debug_port", debugPort),
-			logger.F("error", detectErr.Error()),
-		)
-	}
-	previous := target.replaceClient(client)
-	clientAccepted = true
-	target.viewport = viewport
-	if previous != nil && previous != client {
-		previous.Close()
-	}
-	if expectedURL != "" {
+
+	reconnected := 0
+	var lastErr error
+	for _, entry := range entries {
+		preferredID := ""
+		if entry.client != nil {
+			preferredID = strings.TrimSpace(entry.client.targetID)
+		}
+		matched, ok := inputSyncPickLivePageForReconnect(livePages, preferredID, len(entries))
+		if !ok {
+			lastErr = fmt.Errorf("未找到可重连的页面目标")
+			continue
+		}
+		client, viewport, openErr := openInputSyncPageClientForTarget("target", profileID, name, debugPort, matched, false)
+		if openErr != nil {
+			lastErr = openErr
+			if client != nil {
+				client.Close()
+			}
+			continue
+		}
+		detectCtx, detectCancel := context.WithTimeout(ctx, inputSyncCommandTimeout)
+		detected, reason, detectErr := client.DetectChallenge(detectCtx)
+		detectCancel()
+		if detectErr == nil && detected {
+			client.Close()
+			target.pauseWithKind(inputSyncPauseKindChallenge, reason, false)
+			return fmt.Errorf("%s", reason)
+		}
+		previous := target.replaceClientForSource(entry.sourceID, client)
+		target.viewport = viewport
+		if previous != nil && previous != client {
+			previous.Close()
+		}
+		reconnected++
+		expectedURL := strings.TrimSpace(target.expectedURLFor(entry.sourceID))
+		if expectedURL == "" {
+			continue
+		}
 		navCtx, navCancel := context.WithTimeout(ctx, inputSyncCommandTimeout)
 		currentURL, currentErr := client.CurrentURL(navCtx)
 		navCancel()
 		if currentErr != nil {
-			return currentErr
+			lastErr = currentErr
+			continue
 		}
-		if normalizeInputSyncURL(currentURL) != normalizeInputSyncURL(expectedURL) {
-			if err := client.ApplyAction(inputSyncAction{
-				SessionID: s.id,
-				Kind:      "navigation",
-				Type:      "recover",
-				Event:     inputSyncWireEvent{URL: expectedURL},
-				CreatedAt: time.Now(),
-			}); err != nil {
-				return err
-			}
+		if normalizeInputSyncURL(currentURL) == normalizeInputSyncURL(expectedURL) {
+			continue
 		}
+		if err := client.ApplyAction(inputSyncAction{
+			SessionID:      s.id,
+			Kind:           "navigation",
+			Type:           "recover",
+			SourceTargetID: entry.sourceID,
+			Event:          inputSyncWireEvent{URL: expectedURL},
+			CreatedAt:      time.Now(),
+		}); err != nil {
+			lastErr = err
+		}
+	}
+	if reconnected == 0 {
+		if lastErr != nil {
+			return lastErr
+		}
+		return fmt.Errorf("未找到可重连的页面目标")
 	}
 	return nil
 }
@@ -1391,6 +1702,55 @@ func (s *inputSyncSession) hasMasterClient(targetID string) bool {
 	return client != nil && !client.isClosed()
 }
 
+func (s *inputSyncSession) markAnnouncedTab(targetID string) {
+	if s == nil {
+		return
+	}
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.announcedTabs == nil {
+		s.announcedTabs = make(map[string]struct{})
+	}
+	s.announcedTabs[targetID] = struct{}{}
+	s.mu.Unlock()
+}
+
+func (s *inputSyncSession) unmarkAnnouncedTab(targetID string) {
+	if s == nil {
+		return
+	}
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" {
+		return
+	}
+	s.mu.Lock()
+	delete(s.announcedTabs, targetID)
+	s.mu.Unlock()
+}
+
+func (s *inputSyncSession) shouldAnnounceTab(targetID string) bool {
+	if s == nil {
+		return false
+	}
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.announcedTabs == nil {
+		s.announcedTabs = make(map[string]struct{})
+	}
+	if _, ok := s.announcedTabs[targetID]; ok {
+		return false
+	}
+	s.announcedTabs[targetID] = struct{}{}
+	return true
+}
+
 func (s *inputSyncSession) addMasterClient(ctx context.Context, client *inputSyncPageClient) {
 	if s == nil || client == nil {
 		return
@@ -1452,6 +1812,7 @@ func (s *inputSyncSession) forwardMasterClientEvents(ctx context.Context, client
 		case <-client.done:
 			removed := s.removeMasterClient(targetID, client)
 			if removed && ctx.Err() == nil {
+				s.unmarkAnnouncedTab(client.targetID)
 				s.dispatchSystemEvent(inputSyncWireEvent{
 					Kind:           "tab",
 					Type:           "closed",
@@ -1524,9 +1885,15 @@ func (t *inputSyncTarget) bindClient(sourceTargetID string, client *inputSyncPag
 	if t.clients == nil {
 		t.clients = make(map[string]*inputSyncPageClient)
 	}
+	if t.tabState == nil {
+		t.tabState = make(map[string]*inputSyncTabState)
+	}
 	if sourceTargetID != "" {
 		t.clients[sourceTargetID] = client
 		t.activeSourceID = sourceTargetID
+		if state := t.tabState[sourceTargetID]; state != nil && state.expectedURL != "" {
+			t.expectedURL = state.expectedURL
+		}
 	}
 	t.client = client
 	t.warning = ""
@@ -1544,10 +1911,28 @@ func (t *inputSyncTarget) clientForAction(action inputSyncAction) *inputSyncPage
 		if client := t.clients[sourceTargetID]; client != nil && !client.isClosed() {
 			t.activeSourceID = sourceTargetID
 			t.client = client
+			if state := t.tabState[sourceTargetID]; state != nil && state.expectedURL != "" {
+				t.expectedURL = state.expectedURL
+			}
 			return client
 		}
+		return nil
 	}
 	return t.client
+}
+
+func (t *inputSyncTarget) hasClientForSource(sourceTargetID string) bool {
+	if t == nil {
+		return false
+	}
+	sourceTargetID = strings.TrimSpace(sourceTargetID)
+	if sourceTargetID == "" {
+		return true
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	client := t.clients[sourceTargetID]
+	return client != nil && !client.isClosed()
 }
 
 func (t *inputSyncTarget) exactClientForSource(sourceTargetID string) *inputSyncPageClient {
@@ -1585,6 +1970,30 @@ func (t *inputSyncTarget) clientSnapshot() []*inputSyncPageClient {
 	return out
 }
 
+func (t *inputSyncTarget) clientSourceSnapshot() []inputSyncClientSource {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]inputSyncClientSource, 0, len(t.clients))
+	for sourceID, client := range t.clients {
+		if client == nil {
+			continue
+		}
+		out = append(out, inputSyncClientSource{
+			sourceID: sourceID,
+			client:   client,
+		})
+	}
+	return out
+}
+
+type inputSyncClientSource struct {
+	sourceID string
+	client   *inputSyncPageClient
+}
+
 func (t *inputSyncTarget) unbindClient(sourceTargetID string) *inputSyncPageClient {
 	if t == nil || strings.TrimSpace(sourceTargetID) == "" {
 		return nil
@@ -1593,13 +2002,20 @@ func (t *inputSyncTarget) unbindClient(sourceTargetID string) *inputSyncPageClie
 	t.mu.Lock()
 	client := t.clients[sourceTargetID]
 	delete(t.clients, sourceTargetID)
+	if t.tabState != nil {
+		delete(t.tabState, sourceTargetID)
+	}
 	if t.activeSourceID == sourceTargetID {
 		t.activeSourceID = ""
 		t.client = nil
+		t.expectedURL = ""
 		for nextSource, next := range t.clients {
 			if next != nil && !next.isClosed() {
 				t.activeSourceID = nextSource
 				t.client = next
+				if state := t.tabState[nextSource]; state != nil {
+					t.expectedURL = state.expectedURL
+				}
 				break
 			}
 		}
@@ -1612,14 +2028,44 @@ func (t *inputSyncTarget) replaceClient(next *inputSyncPageClient) *inputSyncPag
 	if t == nil {
 		return nil
 	}
+	sourceID := ""
 	t.mu.Lock()
-	previous := t.client
-	t.client = next
-	if t.clients == nil {
-		t.clients = make(map[string]*inputSyncPageClient)
+	sourceID = t.activeSourceID
+	t.mu.Unlock()
+	return t.replaceClientForSource(sourceID, next)
+}
+
+func (t *inputSyncTarget) replaceClientForSource(sourceTargetID string, next *inputSyncPageClient) *inputSyncPageClient {
+	if t == nil {
+		return nil
 	}
-	if t.activeSourceID != "" {
-		t.clients[t.activeSourceID] = next
+	sourceTargetID = strings.TrimSpace(sourceTargetID)
+	t.mu.Lock()
+	var previous *inputSyncPageClient
+	if sourceTargetID != "" {
+		previous = t.clients[sourceTargetID]
+		if t.clients == nil {
+			t.clients = make(map[string]*inputSyncPageClient)
+		}
+		t.clients[sourceTargetID] = next
+		if t.activeSourceID == "" || t.activeSourceID == sourceTargetID {
+			t.activeSourceID = sourceTargetID
+			t.client = next
+			if state := t.tabState[sourceTargetID]; state != nil && state.expectedURL != "" {
+				t.expectedURL = state.expectedURL
+			}
+		} else if t.client == previous {
+			t.client = next
+		}
+	} else {
+		previous = t.client
+		t.client = next
+		if t.activeSourceID != "" {
+			if t.clients == nil {
+				t.clients = make(map[string]*inputSyncPageClient)
+			}
+			t.clients[t.activeSourceID] = next
+		}
 	}
 	t.warning = ""
 	t.mu.Unlock()
@@ -1837,29 +2283,81 @@ func (s *inputSyncSession) reconnectTarget(target *inputSyncTarget) bool {
 	attempt := 0
 	for {
 		attempt++
-		client, viewport, err := openInputSyncPageClient("target", target.profileID, target.name, target.debugPort, false)
-		if err == nil {
-			previous := target.replaceClient(client)
-			target.viewport = viewport
-			if previous != nil && previous != client {
-				previous.Close()
+		livePages, err := listInputSyncPageTargets(target.debugPort)
+		if err != nil {
+			lastErr = err
+		} else {
+			entries := target.clientSourceSnapshot()
+			if len(entries) == 0 {
+				client, viewport, openErr := openInputSyncPageClient("target", target.profileID, target.name, target.debugPort, false)
+				if openErr == nil {
+					previous := target.replaceClient(client)
+					target.viewport = viewport
+					if previous != nil && previous != client {
+						previous.Close()
+					}
+					logInputSyncTrace("输入同步目标 CDP 重连成功",
+						logger.F("session_id", s.id),
+						logger.F("target_profile_id", target.profileID),
+						logger.F("target_name", target.name),
+						logger.F("target_debug_port", target.debugPort),
+						logger.F("viewport", formatInputSyncViewport(viewport)),
+						logger.F("attempt", attempt),
+					)
+					if s.manager != nil {
+						s.manager.emitStatus(s.status())
+					}
+					return true
+				}
+				lastErr = openErr
+				if client != nil {
+					client.Close()
+				}
+			} else {
+				reconnected := 0
+				var viewport inputSyncViewport
+				for _, entry := range entries {
+					preferredID := ""
+					if entry.client != nil {
+						preferredID = strings.TrimSpace(entry.client.targetID)
+					}
+					matched, ok := inputSyncPickLivePageForReconnect(livePages, preferredID, len(entries))
+					if !ok {
+						lastErr = fmt.Errorf("未找到可重连的页面目标")
+						continue
+					}
+					client, nextViewport, openErr := openInputSyncPageClientForTarget("target", target.profileID, target.name, target.debugPort, matched, false)
+					if openErr != nil {
+						lastErr = openErr
+						if client != nil {
+							client.Close()
+						}
+						continue
+					}
+					previous := target.replaceClientForSource(entry.sourceID, client)
+					viewport = nextViewport
+					if previous != nil && previous != client {
+						previous.Close()
+					}
+					reconnected++
+				}
+				if reconnected > 0 {
+					target.viewport = viewport
+					logInputSyncTrace("输入同步目标 CDP 重连成功",
+						logger.F("session_id", s.id),
+						logger.F("target_profile_id", target.profileID),
+						logger.F("target_name", target.name),
+						logger.F("target_debug_port", target.debugPort),
+						logger.F("viewport", formatInputSyncViewport(viewport)),
+						logger.F("reconnected_tabs", reconnected),
+						logger.F("attempt", attempt),
+					)
+					if s.manager != nil {
+						s.manager.emitStatus(s.status())
+					}
+					return true
+				}
 			}
-			logInputSyncTrace("输入同步目标 CDP 重连成功",
-				logger.F("session_id", s.id),
-				logger.F("target_profile_id", target.profileID),
-				logger.F("target_name", target.name),
-				logger.F("target_debug_port", target.debugPort),
-				logger.F("viewport", formatInputSyncViewport(viewport)),
-				logger.F("attempt", attempt),
-			)
-			if s.manager != nil {
-				s.manager.emitStatus(s.status())
-			}
-			return true
-		}
-		lastErr = err
-		if client != nil {
-			client.Close()
 		}
 		if !time.Now().Before(deadline) {
 			break
@@ -2151,13 +2649,15 @@ func (m *inputSyncManager) syncMasterTargets(ctx context.Context, session *input
 			continue
 		}
 		session.addMasterClient(ctx, client)
-		session.dispatchSystemEvent(inputSyncWireEvent{
-			Kind:           "tab",
-			Type:           "created",
-			URL:            target.url,
-			Title:          target.title,
-			SourceTargetId: target.id,
-		})
+		if session.shouldAnnounceTab(target.id) {
+			session.dispatchSystemEvent(inputSyncWireEvent{
+				Kind:           "tab",
+				Type:           "created",
+				URL:            target.url,
+				Title:          target.title,
+				SourceTargetId: target.id,
+			})
+		}
 		logInputSyncTrace("输入同步主控页面目标已接入",
 			logger.F("session_id", session.id),
 			logger.F("target_id", target.id),
@@ -2175,6 +2675,7 @@ func (m *inputSyncManager) syncMasterTargets(ctx context.Context, session *input
 		if _, ok := seen[client.targetID]; !ok {
 			session.removeMasterClient(client.targetID, client)
 			client.Close()
+			session.unmarkAnnouncedTab(client.targetID)
 			session.dispatchSystemEvent(inputSyncWireEvent{
 				Kind:           "tab",
 				Type:           "closed",
@@ -2284,6 +2785,9 @@ func (t *inputSyncTarget) pauseWithKind(kind string, reason string, recoverable 
 	t.pauseKind = kind
 	t.recoverable = recoverable
 	t.warning = reason
+	t.waitingForLoad = false
+	t.loadWaitReason = ""
+	t.loadWaitStarted = time.Time{}
 	if changed {
 		t.recovering = false
 		t.recoverAttempts = 0
@@ -2322,7 +2826,46 @@ func (t *inputSyncTarget) pauseSnapshot() inputSyncTargetPauseSnapshot {
 		recoverAttempts: t.recoverAttempts,
 		nextRecoverAt:   t.nextRecoverAt,
 		recovering:      t.recovering,
+		waitingForLoad:  t.waitingForLoad,
+		loadWaitReason:  t.loadWaitReason,
+		loadWaitStarted: t.loadWaitStarted,
 	}
+}
+
+func (t *inputSyncTarget) setPageLoadWait(reason string, startedAt time.Time) {
+	if t == nil {
+		return
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "等待页面加载"
+	}
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	t.mu.Lock()
+	t.waitingForLoad = true
+	t.loadWaitReason = reason
+	t.loadWaitStarted = startedAt
+	if !t.paused && t.failureCount == 0 {
+		t.warning = reason
+	}
+	t.mu.Unlock()
+}
+
+func (t *inputSyncTarget) clearPageLoadWait() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	waitReason := t.loadWaitReason
+	t.waitingForLoad = false
+	t.loadWaitReason = ""
+	t.loadWaitStarted = time.Time{}
+	if !t.paused && strings.TrimSpace(t.warning) == strings.TrimSpace(waitReason) {
+		t.warning = ""
+	}
+	t.mu.Unlock()
 }
 
 func (t *inputSyncTarget) recordActionFailure(action inputSyncAction, err error) int {
@@ -2352,35 +2895,115 @@ func (t *inputSyncTarget) resetActionFailures() {
 	t.mu.Unlock()
 }
 
-func (t *inputSyncTarget) setExpectedURL(rawURL string) {
+func (t *inputSyncTarget) ensureTabStateLocked(sourceTargetID string) *inputSyncTabState {
+	if t.tabState == nil {
+		t.tabState = make(map[string]*inputSyncTabState)
+	}
+	state := t.tabState[sourceTargetID]
+	if state == nil {
+		state = &inputSyncTabState{}
+		t.tabState[sourceTargetID] = state
+	}
+	return state
+}
+
+func (t *inputSyncTarget) resolveExpectedSourceID(sourceTargetID string) string {
+	sourceTargetID = strings.TrimSpace(sourceTargetID)
+	if sourceTargetID != "" {
+		return sourceTargetID
+	}
+	return strings.TrimSpace(t.activeSourceID)
+}
+
+func (t *inputSyncTarget) setExpectedURL(sourceTargetID string, rawURL string) {
 	if t == nil {
 		return
 	}
 	rawURL = strings.TrimSpace(rawURL)
 	t.mu.Lock()
-	if t.expectedURL != rawURL {
+	defer t.mu.Unlock()
+	sourceTargetID = t.resolveExpectedSourceID(sourceTargetID)
+	if sourceTargetID == "" {
+		if t.expectedURL != rawURL {
+			t.expectedURL = rawURL
+			t.resyncURL = ""
+			t.resyncFailures = 0
+			t.lastResyncAt = time.Time{}
+		}
+		return
+	}
+	state := t.ensureTabStateLocked(sourceTargetID)
+	if state.expectedURL != rawURL {
+		state.expectedURL = rawURL
+		state.resyncURL = ""
+		state.resyncFailures = 0
+		state.lastResyncAt = time.Time{}
+	}
+	if t.activeSourceID == sourceTargetID || t.activeSourceID == "" {
 		t.expectedURL = rawURL
 		t.resyncURL = ""
 		t.resyncFailures = 0
 		t.lastResyncAt = time.Time{}
 	}
-	t.mu.Unlock()
 }
 
-func (t *inputSyncTarget) resetResyncState(expectedURL string) {
+func (t *inputSyncTarget) expectedURLFor(sourceTargetID string) string {
+	if t == nil {
+		return ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	sourceTargetID = t.resolveExpectedSourceID(sourceTargetID)
+	if sourceTargetID == "" {
+		return t.expectedURL
+	}
+	if state := t.tabState[sourceTargetID]; state != nil {
+		return state.expectedURL
+	}
+	return ""
+}
+
+func (t *inputSyncTarget) expectedURLSnapshot() string {
+	if t == nil {
+		return ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.expectedURL
+}
+
+func (t *inputSyncTarget) resetResyncState(sourceTargetID string, expectedURL string) {
 	if t == nil {
 		return
 	}
 	t.mu.Lock()
-	if t.expectedURL == expectedURL || expectedURL == "" {
+	defer t.mu.Unlock()
+	sourceTargetID = t.resolveExpectedSourceID(sourceTargetID)
+	if sourceTargetID == "" {
+		if t.expectedURL == expectedURL || expectedURL == "" {
+			t.resyncURL = ""
+			t.resyncFailures = 0
+			t.lastResyncAt = time.Time{}
+		}
+		return
+	}
+	state := t.tabState[sourceTargetID]
+	if state == nil {
+		return
+	}
+	if state.expectedURL == expectedURL || expectedURL == "" {
+		state.resyncURL = ""
+		state.resyncFailures = 0
+		state.lastResyncAt = time.Time{}
+	}
+	if t.activeSourceID == sourceTargetID {
 		t.resyncURL = ""
 		t.resyncFailures = 0
 		t.lastResyncAt = time.Time{}
 	}
-	t.mu.Unlock()
 }
 
-func (t *inputSyncTarget) reserveResyncAttempt(expectedURL string, now time.Time) (int, bool, string) {
+func (t *inputSyncTarget) reserveResyncAttempt(sourceTargetID string, expectedURL string, now time.Time) (int, bool, string) {
 	if t == nil {
 		return 0, false, ""
 	}
@@ -2393,12 +3016,26 @@ func (t *inputSyncTarget) reserveResyncAttempt(expectedURL string, now time.Time
 	if t.paused {
 		return t.resyncFailures, false, t.suspendReason
 	}
-	if t.resyncURL != expectedURL {
-		t.resyncURL = expectedURL
-		t.resyncFailures = 0
-		t.lastResyncAt = time.Time{}
+	sourceTargetID = t.resolveExpectedSourceID(sourceTargetID)
+	var resyncURL *string
+	var resyncFailures *int
+	var lastResyncAt *time.Time
+	if sourceTargetID == "" {
+		resyncURL = &t.resyncURL
+		resyncFailures = &t.resyncFailures
+		lastResyncAt = &t.lastResyncAt
+	} else {
+		state := t.ensureTabStateLocked(sourceTargetID)
+		resyncURL = &state.resyncURL
+		resyncFailures = &state.resyncFailures
+		lastResyncAt = &state.lastResyncAt
 	}
-	if t.resyncFailures >= inputSyncMaxResyncTries {
+	if *resyncURL != expectedURL {
+		*resyncURL = expectedURL
+		*resyncFailures = 0
+		*lastResyncAt = time.Time{}
+	}
+	if *resyncFailures >= inputSyncMaxResyncTries {
 		reason := fmt.Sprintf("状态偏离后已重同步 %d 次仍未恢复，已暂停该实例", inputSyncMaxResyncTries)
 		t.paused = true
 		t.suspendReason = reason
@@ -2408,14 +3045,19 @@ func (t *inputSyncTarget) reserveResyncAttempt(expectedURL string, now time.Time
 		t.recovering = false
 		t.nextRecoverAt = now.Add(inputSyncRecoverBackoffForAttempt(0))
 		t.warning = reason
-		return t.resyncFailures, false, reason
+		return *resyncFailures, false, reason
 	}
-	if !t.lastResyncAt.IsZero() && now.Sub(t.lastResyncAt) < inputSyncResyncCooldown {
-		return t.resyncFailures, true, ""
+	if !lastResyncAt.IsZero() && now.Sub(*lastResyncAt) < inputSyncResyncCooldown {
+		return *resyncFailures, true, ""
 	}
-	t.resyncFailures++
-	t.lastResyncAt = now
-	return t.resyncFailures, false, ""
+	*resyncFailures++
+	*lastResyncAt = now
+	if sourceTargetID != "" && t.activeSourceID == sourceTargetID {
+		t.resyncURL = *resyncURL
+		t.resyncFailures = *resyncFailures
+		t.lastResyncAt = *lastResyncAt
+	}
+	return *resyncFailures, false, ""
 }
 
 func (t *inputSyncTarget) beginRecoverAttempt(automatic bool, now time.Time) (int, error) {
@@ -2503,6 +3145,17 @@ func (t *inputSyncTarget) finishRecoverSuccess() {
 	t.resyncURL = ""
 	t.resyncFailures = 0
 	t.lastResyncAt = time.Time{}
+	for _, state := range t.tabState {
+		if state == nil {
+			continue
+		}
+		state.resyncURL = ""
+		state.resyncFailures = 0
+		state.lastResyncAt = time.Time{}
+	}
+	t.waitingForLoad = false
+	t.loadWaitReason = ""
+	t.loadWaitStarted = time.Time{}
 	t.warning = ""
 	t.mu.Unlock()
 }
@@ -2564,6 +3217,139 @@ func (t *inputSyncTarget) runActionQueue(ctx context.Context, session *inputSync
 	}
 }
 
+func (t *inputSyncTarget) waitUntilActionReady(ctx context.Context, session *inputSyncSession, action inputSyncAction) error {
+	if t == nil || session == nil || !inputSyncActionNeedsReadiness(action) {
+		return nil
+	}
+	startedAt := time.Now()
+	deadline := startedAt.Add(inputSyncPageReadyWait)
+	loggedWait := false
+	expectedURL := t.expectedURLFor(action.SourceTargetID)
+	for {
+		if ctx.Err() != nil {
+			t.clearPageLoadWait()
+			return ctx.Err()
+		}
+		if t.isPaused() {
+			t.clearPageLoadWait()
+			return fmt.Errorf("目标已暂停")
+		}
+		client := t.clientForAction(action)
+		if client == nil || client.isClosed() {
+			t.clearPageLoadWait()
+			return nil
+		}
+		checkCtx, cancel := context.WithTimeout(ctx, inputSyncCommandTimeout)
+		readiness, err := client.ActionReadiness(checkCtx, action, expectedURL)
+		cancel()
+		if err != nil {
+			if inputSyncErrorLooksPageLoading(err) {
+				readiness = inputSyncActionReadiness{
+					waitable: true,
+					reason:   "页面导航中，等待执行上下文恢复",
+				}
+			} else {
+				t.clearPageLoadWait()
+				return nil
+			}
+		}
+		if readiness.ready {
+			if loggedWait {
+				logger.New("InputSync").Info("输入同步从浏览器页面已就绪，继续重放 Action",
+					logger.F("session_id", session.id),
+					logger.F("target_profile_id", t.profileID),
+					logger.F("target_name", t.name),
+					logger.F("target_debug_port", t.debugPort),
+					logger.F("action_seq", action.Sequence),
+					logger.F("ready_state", readiness.readyState),
+					logger.F("url", sanitizeInputSyncURLForLog(readiness.url)),
+				)
+			}
+			t.clearPageLoadWait()
+			if loggedWait && session.manager != nil {
+				session.manager.emitStatus(session.status())
+			}
+			return nil
+		}
+		if !readiness.waitable {
+			if loggedWait {
+				logger.New("InputSync").Warn("输入同步从浏览器加载等待结束，Action 仍不可直接重放",
+					logger.F("session_id", session.id),
+					logger.F("target_profile_id", t.profileID),
+					logger.F("target_name", t.name),
+					logger.F("target_debug_port", t.debugPort),
+					logger.F("action_seq", action.Sequence),
+					logger.F("reason", readiness.reason),
+					logger.F("ready_state", readiness.readyState),
+					logger.F("url", sanitizeInputSyncURLForLog(readiness.url)),
+				)
+			}
+			if readiness.urlMismatch {
+				reason := strings.TrimSpace(readiness.reason)
+				if reason == "" {
+					reason = "从浏览器尚未开始导航到主控页面"
+				}
+				logger.New("InputSync").Warn("输入同步从浏览器尚未开始加载主控页面，跳过当前 Action 并触发重同步",
+					logger.F("session_id", session.id),
+					logger.F("target_profile_id", t.profileID),
+					logger.F("target_name", t.name),
+					logger.F("target_debug_port", t.debugPort),
+					logger.F("action_seq", action.Sequence),
+					logger.F("action", inputSyncActionTrace(action)),
+					logger.F("reason", reason),
+					logger.F("ready_state", readiness.readyState),
+					logger.F("url", sanitizeInputSyncURLForLog(readiness.url)),
+					logger.F("expected_url", sanitizeInputSyncURLForLog(expectedURL)),
+				)
+				t.clearPageLoadWait()
+				if loggedWait && session.manager != nil {
+					session.manager.emitStatus(session.status())
+				}
+				t.verifyState(ctx, session)
+				return inputSyncActionSkippedError{reason: reason}
+			}
+			t.clearPageLoadWait()
+			if loggedWait && session.manager != nil {
+				session.manager.emitStatus(session.status())
+			}
+			return nil
+		}
+		reason := strings.TrimSpace(readiness.reason)
+		if reason == "" {
+			reason = "等待页面加载"
+		}
+		if time.Now().After(deadline) {
+			t.clearPageLoadWait()
+			return inputSyncPageNotReadyError{reason: reason}
+		}
+		t.setPageLoadWait(reason, startedAt)
+		if !loggedWait {
+			loggedWait = true
+			logger.New("InputSync").Info("输入同步从浏览器页面未就绪，等待 Action 重放",
+				logger.F("session_id", session.id),
+				logger.F("target_profile_id", t.profileID),
+				logger.F("target_name", t.name),
+				logger.F("target_debug_port", t.debugPort),
+				logger.F("action_seq", action.Sequence),
+				logger.F("action", inputSyncActionTrace(action)),
+				logger.F("reason", reason),
+				logger.F("ready_state", readiness.readyState),
+				logger.F("url", sanitizeInputSyncURLForLog(readiness.url)),
+				logger.F("max_wait_ms", inputSyncPageReadyWait.Milliseconds()),
+			)
+			if session.manager != nil {
+				session.manager.emitStatus(session.status())
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.clearPageLoadWait()
+			return ctx.Err()
+		case <-time.After(inputSyncPageReadyPoll):
+		}
+	}
+}
+
 func (t *inputSyncTarget) applyQueuedAction(ctx context.Context, session *inputSyncSession, action inputSyncAction) {
 	if t == nil || session == nil {
 		return
@@ -2572,8 +3358,60 @@ func (t *inputSyncTarget) applyQueuedAction(ctx context.Context, session *inputS
 		t.droppedActions.Add(1)
 		return
 	}
+	if action.Kind != "tab" && strings.TrimSpace(action.SourceTargetID) != "" && !t.hasClientForSource(action.SourceTargetID) {
+		logInputSyncTrace("输入同步丢弃已关闭 tab 的残留 Action",
+			logger.F("session_id", session.id),
+			logger.F("target_profile_id", t.profileID),
+			logger.F("target_name", t.name),
+			logger.F("target_debug_port", t.debugPort),
+			logger.F("action_seq", action.Sequence),
+			logger.F("action", inputSyncActionTrace(action)),
+		)
+		return
+	}
 	if action.Kind == "navigation" && strings.TrimSpace(action.Event.URL) != "" {
-		t.setExpectedURL(action.Event.URL)
+		t.setExpectedURL(action.SourceTargetID, action.Event.URL)
+	}
+	if inputSyncActionNeedsReadiness(action) {
+		if detected, reason := t.detectChallengeForAction(ctx, action); detected {
+			if t.pauseWithKind(inputSyncPauseKindChallenge, reason, false) && session.manager != nil {
+				session.manager.emitStatus(session.status())
+			}
+			logger.New("InputSync").Warn("输入同步从浏览器 Action 执行前检测到验证码/风控，已暂停该实例",
+				logger.F("session_id", session.id),
+				logger.F("target_profile_id", t.profileID),
+				logger.F("target_name", t.name),
+				logger.F("target_debug_port", t.debugPort),
+				logger.F("action_seq", action.Sequence),
+				logger.F("action", inputSyncActionTrace(action)),
+				logger.F("reason", reason),
+			)
+			return
+		}
+	}
+	if err := t.waitUntilActionReady(ctx, session, action); err != nil {
+		if _, ok := err.(inputSyncPageNotReadyError); ok {
+			reason := fmt.Sprintf("页面长时间未加载完成，已暂停该实例：%s", err.Error())
+			if t.pauseWithKind(inputSyncPauseKindPageNotReady, reason, true) && session.manager != nil {
+				session.manager.emitStatus(session.status())
+			}
+			logger.New("InputSync").Warn("输入同步从浏览器等待页面就绪超时，已暂停该实例",
+				logger.F("session_id", session.id),
+				logger.F("target_profile_id", t.profileID),
+				logger.F("target_name", t.name),
+				logger.F("target_debug_port", t.debugPort),
+				logger.F("action_seq", action.Sequence),
+				logger.F("action", inputSyncActionTrace(action)),
+				logger.F("error", err.Error()),
+			)
+			return
+		}
+		if _, ok := err.(inputSyncActionSkippedError); ok {
+			return
+		}
+		if ctx.Err() != nil || t.isPaused() {
+			return
+		}
 	}
 	err := t.applyActionOnce(action)
 	if err != nil {
@@ -2611,7 +3449,7 @@ func (t *inputSyncTarget) applyQueuedAction(ctx context.Context, session *inputS
 			}
 			return
 		}
-		if !inputSyncErrorNeedsReconnect(err) {
+		if !inputSyncErrorNeedsReconnect(err) || action.Kind == "tab" {
 			logger.New("InputSync").Warn("输入同步从浏览器 Action 执行失败，已记录但不重连",
 				logger.F("session_id", session.id),
 				logger.F("target_profile_id", t.profileID),
@@ -2712,6 +3550,9 @@ func (t *inputSyncTarget) applyActionOnce(action inputSyncAction) error {
 	}
 	client := t.clientForAction(action)
 	if client == nil {
+		if strings.TrimSpace(action.SourceTargetID) != "" {
+			return nil
+		}
 		return fmt.Errorf("目标 CDP client 不存在")
 	}
 	return client.ApplyAction(action)
@@ -2725,25 +3566,209 @@ func (t *inputSyncTarget) applyTabAction(action inputSyncAction) error {
 	switch action.Type {
 	case "closed":
 		client := t.unbindClient(sourceTargetID)
+		var closeErr error
 		if client != nil {
-			return client.ClosePageTarget()
+			closeErr = client.ClosePageTarget()
+			t.unmarkOwnedTab(client.targetID)
 		}
-		return nil
+		t.closeUnmappedTabs()
+		return closeErr
 	case "created", "activated":
-		if client := t.exactClientForSource(sourceTargetID); client != nil && !client.isClosed() {
+		existing := t.exactClientForSource(sourceTargetID)
+		hasClient := existing != nil
+		clientClosed := hasClient && existing.isClosed()
+		plan := inputSyncPlanTabAction(action.Type, hasClient, clientClosed)
+		switch plan {
+		case inputSyncTabPlanIgnore:
+			return nil
+		case inputSyncTabPlanBind:
+			t.bindClient(sourceTargetID, existing)
+			if action.Type == "created" && strings.TrimSpace(action.Event.URL) != "" {
+				t.setExpectedURL(sourceTargetID, action.Event.URL)
+			}
+			if action.Type == "activated" {
+				_ = existing.Activate()
+			}
+			return nil
+		case inputSyncTabPlanReconnect:
+			if err := t.reconnectClientForSource(sourceTargetID, existing); err != nil {
+				return err
+			}
+			if action.Type == "created" && strings.TrimSpace(action.Event.URL) != "" {
+				t.setExpectedURL(sourceTargetID, action.Event.URL)
+			}
+			if action.Type == "activated" {
+				if client := t.exactClientForSource(sourceTargetID); client != nil {
+					_ = client.Activate()
+				}
+			}
+			return nil
+		case inputSyncTabPlanCreate:
+			client, viewport, err := openInputSyncNewPageClient("target", t.profileID, t.name, t.debugPort, action.Event.URL)
+			if err != nil {
+				return err
+			}
 			t.bindClient(sourceTargetID, client)
+			t.markOwnedTab(client.targetID)
+			t.viewport = viewport
+			if strings.TrimSpace(action.Event.URL) != "" {
+				t.setExpectedURL(sourceTargetID, action.Event.URL)
+			}
+			return nil
+		default:
 			return nil
 		}
-		client, viewport, err := openInputSyncNewPageClient("target", t.profileID, t.name, t.debugPort, action.Event.URL)
-		if err != nil {
-			return err
-		}
-		t.bindClient(sourceTargetID, client)
-		t.viewport = viewport
-		return nil
 	default:
 		return nil
 	}
+}
+
+func (t *inputSyncTarget) markOwnedTab(targetID string) {
+	if t == nil {
+		return
+	}
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" {
+		return
+	}
+	t.mu.Lock()
+	if t.ownedTabs == nil {
+		t.ownedTabs = make(map[string]struct{})
+	}
+	t.ownedTabs[targetID] = struct{}{}
+	t.mu.Unlock()
+}
+
+func (t *inputSyncTarget) unmarkOwnedTab(targetID string) {
+	if t == nil {
+		return
+	}
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" {
+		return
+	}
+	t.mu.Lock()
+	delete(t.ownedTabs, targetID)
+	t.mu.Unlock()
+}
+
+func (t *inputSyncTarget) mappedTabIDs() map[string]struct{} {
+	mapped := make(map[string]struct{})
+	if t == nil {
+		return mapped
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, client := range t.clients {
+		if client == nil {
+			continue
+		}
+		id := strings.TrimSpace(client.targetID)
+		if id == "" {
+			continue
+		}
+		mapped[id] = struct{}{}
+	}
+	return mapped
+}
+
+func (t *inputSyncTarget) reconnectClientForSource(sourceTargetID string, staleClient *inputSyncPageClient) error {
+	if t == nil {
+		return fmt.Errorf("目标不存在")
+	}
+	sourceTargetID = strings.TrimSpace(sourceTargetID)
+	if sourceTargetID == "" {
+		return fmt.Errorf("缺少 source target id")
+	}
+	preferredID := ""
+	if staleClient != nil {
+		preferredID = strings.TrimSpace(staleClient.targetID)
+	}
+	if preferredID == "" {
+		return fmt.Errorf("缺少可重连的页面 target id")
+	}
+	livePages, err := listInputSyncPageTargets(t.debugPort)
+	if err != nil {
+		return err
+	}
+	matched, ok := inputSyncMatchLivePage(livePages, preferredID)
+	if !ok {
+		return fmt.Errorf("未找到可重连的页面目标: %s", preferredID)
+	}
+	client, viewport, err := openInputSyncPageClientForTarget("target", t.profileID, t.name, t.debugPort, matched, false)
+	if err != nil {
+		if client != nil {
+			client.Close()
+		}
+		return err
+	}
+	previous := t.replaceClientForSource(sourceTargetID, client)
+	t.viewport = viewport
+	if previous != nil && previous != client {
+		previous.Close()
+	}
+	return nil
+}
+
+func (t *inputSyncTarget) closeUnmappedTabs() {
+	if t == nil || t.debugPort <= 0 {
+		return
+	}
+	livePages, err := listInputSyncPageTargets(t.debugPort)
+	if err != nil {
+		logger.New("InputSync").Warn("输入同步清理未映射 tab 时读取页面列表失败",
+			logger.F("target_profile_id", t.profileID),
+			logger.F("target_name", t.name),
+			logger.F("target_debug_port", t.debugPort),
+			logger.F("error", err.Error()),
+		)
+		return
+	}
+	mapped := t.mappedTabIDs()
+	toClose := inputSyncUnmappedTabsToClose(livePages, mapped)
+	if len(toClose) == 0 {
+		return
+	}
+	if err := closeInputSyncPageTargetsByID(t.debugPort, toClose); err != nil {
+		logger.New("InputSync").Warn("输入同步清理未映射 tab 失败",
+			logger.F("target_profile_id", t.profileID),
+			logger.F("target_name", t.name),
+			logger.F("target_debug_port", t.debugPort),
+			logger.F("unmapped_count", len(toClose)),
+			logger.F("error", err.Error()),
+		)
+	}
+	for _, id := range toClose {
+		t.unmarkOwnedTab(id)
+	}
+}
+
+func closeInputSyncPageTargetsByID(debugPort int, targetIDs []string) error {
+	if debugPort <= 0 || len(targetIDs) == 0 {
+		return nil
+	}
+	browser, ws, cancel, err := connectInputSyncRodBrowser(debugPort)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = ws.Close()
+		cancel()
+	}()
+	var firstErr error
+	for _, id := range targetIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		ctx, closeCancel := context.WithTimeout(context.Background(), inputSyncCommandTimeout)
+		_, closeErr := proto.TargetCloseTarget{TargetID: proto.TargetTargetID(id)}.Call(browser.Context(ctx))
+		closeCancel()
+		if closeErr != nil && firstErr == nil {
+			firstErr = closeErr
+		}
+	}
+	return firstErr
 }
 
 func (t *inputSyncTarget) verifyState(ctx context.Context, session *inputSyncSession) {
@@ -2753,14 +3778,48 @@ func (t *inputSyncTarget) verifyState(ctx context.Context, session *inputSyncSes
 	if t.isPaused() {
 		return
 	}
-	t.mu.Lock()
-	expectedURL := t.expectedURL
-	t.mu.Unlock()
-	if strings.TrimSpace(expectedURL) == "" {
+	t.closeUnmappedTabs()
+	for _, entry := range t.clientSourceSnapshot() {
+		if t.isPaused() || ctx.Err() != nil {
+			return
+		}
+		t.verifyClientState(ctx, session, entry.sourceID, entry.client)
+	}
+}
+
+func (t *inputSyncTarget) verifyClientState(ctx context.Context, session *inputSyncSession, sourceTargetID string, client *inputSyncPageClient) {
+	if t == nil || session == nil || client == nil || client.isClosed() {
 		return
 	}
-	client := t.getClient()
-	if client == nil || client.isClosed() {
+	expectedURL := strings.TrimSpace(t.expectedURLFor(sourceTargetID))
+	if expectedURL == "" {
+		return
+	}
+	readinessCtx, readinessCancel := context.WithTimeout(ctx, inputSyncCommandTimeout)
+	readiness, readinessErr := client.PageReadiness(readinessCtx)
+	readinessCancel()
+	if readinessErr != nil && inputSyncErrorLooksPageLoading(readinessErr) {
+		logInputSyncTrace("输入同步从浏览器状态校验遇到页面加载中，跳过 URL 偏离判断",
+			logger.F("session_id", session.id),
+			logger.F("target_profile_id", t.profileID),
+			logger.F("target_name", t.name),
+			logger.F("target_debug_port", t.debugPort),
+			logger.F("source_target_id", sourceTargetID),
+			logger.F("error", readinessErr.Error()),
+		)
+		return
+	}
+	if readinessErr == nil && !readiness.ready && readiness.waitable {
+		logInputSyncTrace("输入同步从浏览器状态校验等待页面加载，跳过 URL 偏离判断",
+			logger.F("session_id", session.id),
+			logger.F("target_profile_id", t.profileID),
+			logger.F("target_name", t.name),
+			logger.F("target_debug_port", t.debugPort),
+			logger.F("source_target_id", sourceTargetID),
+			logger.F("reason", readiness.reason),
+			logger.F("ready_state", readiness.readyState),
+			logger.F("url", sanitizeInputSyncURLForLog(readiness.url)),
+		)
 		return
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, inputSyncCommandTimeout)
@@ -2772,12 +3831,13 @@ func (t *inputSyncTarget) verifyState(ctx context.Context, session *inputSyncSes
 			logger.F("target_profile_id", t.profileID),
 			logger.F("target_name", t.name),
 			logger.F("target_debug_port", t.debugPort),
+			logger.F("source_target_id", sourceTargetID),
 			logger.F("error", err.Error()),
 		)
 		return
 	}
 	if normalizeInputSyncURL(currentURL) == normalizeInputSyncURL(expectedURL) {
-		t.resetResyncState(expectedURL)
+		t.resetResyncState(sourceTargetID, expectedURL)
 		return
 	}
 	detectCtx, detectCancel := context.WithTimeout(ctx, inputSyncCommandTimeout)
@@ -2790,6 +3850,7 @@ func (t *inputSyncTarget) verifyState(ctx context.Context, session *inputSyncSes
 				logger.F("target_profile_id", t.profileID),
 				logger.F("target_name", t.name),
 				logger.F("target_debug_port", t.debugPort),
+				logger.F("source_target_id", sourceTargetID),
 				logger.F("current_url", sanitizeInputSyncURLForLog(currentURL)),
 				logger.F("expected_url", sanitizeInputSyncURLForLog(expectedURL)),
 				logger.F("reason", reason),
@@ -2800,13 +3861,14 @@ func (t *inputSyncTarget) verifyState(ctx context.Context, session *inputSyncSes
 		}
 		return
 	}
-	attempt, coolingDown, pauseReason := t.reserveResyncAttempt(expectedURL, time.Now())
+	attempt, coolingDown, pauseReason := t.reserveResyncAttempt(sourceTargetID, expectedURL, time.Now())
 	if pauseReason != "" {
 		logger.New("InputSync").Warn("输入同步从浏览器 URL 偏离超过重同步次数，已暂停该实例",
 			logger.F("session_id", session.id),
 			logger.F("target_profile_id", t.profileID),
 			logger.F("target_name", t.name),
 			logger.F("target_debug_port", t.debugPort),
+			logger.F("source_target_id", sourceTargetID),
 			logger.F("current_url", sanitizeInputSyncURLForLog(currentURL)),
 			logger.F("expected_url", sanitizeInputSyncURLForLog(expectedURL)),
 			logger.F("reason", pauseReason),
@@ -2824,23 +3886,26 @@ func (t *inputSyncTarget) verifyState(ctx context.Context, session *inputSyncSes
 		logger.F("target_profile_id", t.profileID),
 		logger.F("target_name", t.name),
 		logger.F("target_debug_port", t.debugPort),
+		logger.F("source_target_id", sourceTargetID),
 		logger.F("current_url", sanitizeInputSyncURLForLog(currentURL)),
 		logger.F("expected_url", sanitizeInputSyncURLForLog(expectedURL)),
 		logger.F("resync_attempt", attempt),
 		logger.F("resync_max", inputSyncMaxResyncTries),
 	)
 	if err := client.ApplyAction(inputSyncAction{
-		SessionID: session.id,
-		Kind:      "navigation",
-		Type:      "resync",
-		Event:     inputSyncWireEvent{URL: expectedURL},
-		CreatedAt: time.Now(),
+		SessionID:      session.id,
+		Kind:           "navigation",
+		Type:           "resync",
+		SourceTargetID: sourceTargetID,
+		Event:          inputSyncWireEvent{URL: expectedURL},
+		CreatedAt:      time.Now(),
 	}); err != nil {
 		logger.New("InputSync").Warn("输入同步从浏览器有限重同步失败",
 			logger.F("session_id", session.id),
 			logger.F("target_profile_id", t.profileID),
 			logger.F("target_name", t.name),
 			logger.F("target_debug_port", t.debugPort),
+			logger.F("source_target_id", sourceTargetID),
 			logger.F("expected_url", sanitizeInputSyncURLForLog(expectedURL)),
 			logger.F("resync_attempt", attempt),
 			logger.F("error", err.Error()),
@@ -2928,6 +3993,30 @@ func openInputSyncPageClient(role string, profileID string, profileName string, 
 	return openInputSyncPageClientForTarget(role, profileID, profileName, debugPort, targets[0], withEvents)
 }
 
+func inputSyncMatchLivePage(live []inputSyncPageTarget, preferredID string) (inputSyncPageTarget, bool) {
+	preferredID = strings.TrimSpace(preferredID)
+	if preferredID == "" {
+		return inputSyncPageTarget{}, false
+	}
+	for _, page := range live {
+		if strings.TrimSpace(page.id) == preferredID {
+			return page, true
+		}
+	}
+	return inputSyncPageTarget{}, false
+}
+
+func inputSyncPickLivePageForReconnect(live []inputSyncPageTarget, preferredID string, mappedCount int) (inputSyncPageTarget, bool) {
+	if matched, ok := inputSyncMatchLivePage(live, preferredID); ok {
+		return matched, true
+	}
+	// Single-tab compatibility: only fall back when this instance has one mapping and Chrome exposes one page.
+	if mappedCount == 1 && len(live) == 1 {
+		return live[0], true
+	}
+	return inputSyncPageTarget{}, false
+}
+
 func openInputSyncPageClientForTarget(role string, profileID string, profileName string, debugPort int, target inputSyncPageTarget, withEvents bool) (*inputSyncPageClient, inputSyncViewport, error) {
 	client, err := newInputSyncPageClient(role, profileID, profileName, debugPort, target, withEvents)
 	if err != nil {
@@ -2952,7 +4041,7 @@ func openInputSyncNewPageClient(role string, profileID string, profileName strin
 	defer cancel()
 	viewport, err := client.Viewport(ctx)
 	if err != nil {
-		client.Close()
+		_ = client.ClosePageTarget()
 		return nil, inputSyncViewport{}, err
 	}
 	return client, viewport, nil
@@ -3353,6 +4442,67 @@ func (c *inputSyncPageClient) applyNavigationState(action inputSyncAction) error
 	return err
 }
 
+func (c *inputSyncPageClient) ActionReadiness(ctx context.Context, action inputSyncAction, expectedURL string) (inputSyncActionReadiness, error) {
+	if c == nil {
+		return inputSyncActionReadiness{}, fmt.Errorf("CDP client is nil")
+	}
+	if c.isClosed() {
+		return inputSyncActionReadiness{}, fmt.Errorf("CDP connection closed")
+	}
+	selector := strings.TrimSpace(action.Event.Selector)
+	selectorChecked := selector != "" && (action.Kind == "mouse" || action.Kind == "input" || action.Kind == "scroll")
+	value, err := c.evaluateRuntimeValue(ctx, `(function () {
+  var selector = `+inputSyncJSONLiteral(selector)+`;
+  var selectorChecked = `+inputSyncJSONLiteral(selectorChecked)+`;
+  var kind = `+inputSyncJSONLiteral(action.Kind)+`;
+  var snapshot = {
+    url: String(location.href || ''),
+    readyState: String(document.readyState || ''),
+    hasBody: !!document.body,
+    selectorChecked: !!selectorChecked,
+    selectorFound: false,
+    selectorVisible: false,
+    selectorWritable: false
+  };
+  if (!selectorChecked) return snapshot;
+  var el = null;
+  try { el = document.querySelector(selector); } catch (_) { el = null; }
+  if (!el) return snapshot;
+  snapshot.selectorFound = true;
+  var rect = null;
+  try { rect = el.getBoundingClientRect(); } catch (_) {}
+  snapshot.selectorVisible = !!rect && rect.width > 0 && rect.height > 0;
+  snapshot.selectorWritable = !el.disabled && !el.readOnly && (
+    kind !== 'input' ||
+    ('value' in el) ||
+    !!el.isContentEditable ||
+    String(el.getAttribute && el.getAttribute('contenteditable') || '').toLowerCase() === 'true'
+  );
+  return snapshot;
+})()`)
+	if err != nil {
+		return inputSyncActionReadiness{}, err
+	}
+	item, ok := value.(map[string]any)
+	if !ok {
+		return inputSyncActionReadiness{}, fmt.Errorf("页面就绪状态解析失败")
+	}
+	snapshot := inputSyncPageActionSnapshot{
+		url:              strings.TrimSpace(inputSyncString(item["url"])),
+		readyState:       strings.TrimSpace(inputSyncString(item["readyState"])),
+		hasBody:          inputSyncBool(item["hasBody"]),
+		selectorChecked:  inputSyncBool(item["selectorChecked"]),
+		selectorFound:    inputSyncBool(item["selectorFound"]),
+		selectorVisible:  inputSyncBool(item["selectorVisible"]),
+		selectorWritable: inputSyncBool(item["selectorWritable"]),
+	}
+	return inputSyncEvaluateActionReadiness(action, expectedURL, snapshot), nil
+}
+
+func (c *inputSyncPageClient) PageReadiness(ctx context.Context) (inputSyncActionReadiness, error) {
+	return c.ActionReadiness(ctx, inputSyncAction{Kind: "key"}, "")
+}
+
 func (c *inputSyncPageClient) CurrentURL(ctx context.Context) (string, error) {
 	if c == nil {
 		return "", fmt.Errorf("CDP client is nil")
@@ -3464,6 +4614,32 @@ func (c *inputSyncPageClient) Close() {
 		}
 		close(c.done)
 	})
+}
+
+func (c *inputSyncPageClient) Activate() error {
+	if c == nil {
+		return nil
+	}
+	if c.isClosed() {
+		return fmt.Errorf("CDP connection closed")
+	}
+	targetID := strings.TrimSpace(c.targetID)
+	ctx, cancel := context.WithTimeout(context.Background(), inputSyncCommandTimeout)
+	defer cancel()
+	var firstErr error
+	if c.browser != nil && targetID != "" {
+		activate := proto.TargetActivateTarget{TargetID: proto.TargetTargetID(targetID)}
+		if err := activate.Call(c.browser.Context(ctx)); err != nil {
+			firstErr = err
+		}
+	}
+	if c.page != nil {
+		bringToFront := proto.PageBringToFront{}
+		if err := bringToFront.Call(c.page.Context(ctx)); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (c *inputSyncPageClient) ClosePageTarget() error {
@@ -3598,6 +4774,24 @@ func inputSyncNumber(value any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func inputSyncString(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	case nil:
+		return ""
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func inputSyncBool(value any) bool {
+	v, ok := value.(bool)
+	return ok && v
 }
 
 func inputSyncViewportMatches(a inputSyncViewport, b inputSyncViewport) bool {

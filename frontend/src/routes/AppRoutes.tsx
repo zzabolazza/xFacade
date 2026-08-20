@@ -8,6 +8,10 @@ const BrowserListPage = lazyNamed(
   () => import("../modules/browser/pages/BrowserListPage"),
   "BrowserListPage",
 );
+const BrowserInputSyncPage = lazyNamed(
+  () => import("../modules/browser/pages/BrowserInputSyncPage"),
+  "BrowserInputSyncPage",
+);
 const BrowserDetailPage = lazyNamed(
   () => import("../modules/browser/pages/BrowserDetailPage"),
   "BrowserDetailPage",
@@ -51,6 +55,7 @@ export function AppRoutes() {
       <Route path="/" element={<Navigate to="/browser/list" replace />} />
       <Route path="/settings" element={<SettingsPage />} />
       <Route path="/browser/list" element={<BrowserListPage />} />
+      <Route path="/browser/input-sync" element={<BrowserInputSyncPage />} />
       <Route path="/browser/detail/:id" element={<BrowserDetailPage />} />
       <Route path="/browser/edit/:id" element={<BrowserEditPage />} />
       <Route path="/browser/copy/:id" element={<BrowserCopyPage />} />

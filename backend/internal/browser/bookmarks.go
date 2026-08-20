@@ -1,13 +1,39 @@
 package browser
 
 import (
-	"facade/backend/internal/config"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"facade/backend/internal/config"
 )
+
+// NormalizeBookmarkURL normalizes a bookmark URL for stable dedupe against Chrome's Bookmarks file.
+// Missing scheme defaults to https://; scheme/host are lowercased; empty path becomes "/".
+func NormalizeBookmarkURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	candidate := trimmed
+	if !strings.Contains(candidate, "://") {
+		candidate = "https://" + candidate
+	}
+	parsed, err := url.Parse(candidate)
+	if err != nil || parsed.Host == "" {
+		return trimmed
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	if parsed.Path == "" {
+		parsed.Path = "/"
+	}
+	return parsed.String()
+}
 
 // chromiumEpoch 是 Chrome FILETIME 的起始时间（1601-01-01 UTC）
 var chromiumEpoch = time.Date(1601, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -49,27 +75,29 @@ func EnsureDefaultBookmarks(userDataDir string, bookmarks []config.BrowserBookma
 	// 计算当前最大 id，用于分配新 id
 	maxID := findMaxID(root)
 
-	// 把不存在的默认书签追加进去
+	// 把不存在的默认书签追加进去（URL 规范化后再去重）
 	added := false
 	for _, b := range bookmarks {
-		if b.Name == "" || b.URL == "" {
+		name := strings.TrimSpace(b.Name)
+		normalizedURL := NormalizeBookmarkURL(b.URL)
+		if name == "" || normalizedURL == "" {
 			continue
 		}
-		if existingURLs[b.URL] {
+		if existingURLs[normalizedURL] {
 			continue
 		}
 		maxID++
 		barChildren = append(barChildren, map[string]interface{}{
 			"date_added":     now,
 			"date_last_used": "0",
-			"guid":           bookmarkGUID(b.URL),
+			"guid":           bookmarkGUID(normalizedURL),
 			"id":             fmt.Sprintf("%d", maxID),
 			"meta_info":      map[string]string{"power_bookmark_meta": ""},
-			"name":           b.Name,
+			"name":           name,
 			"type":           "url",
-			"url":            b.URL,
+			"url":            normalizedURL,
 		})
-		existingURLs[b.URL] = true
+		existingURLs[normalizedURL] = true
 		added = true
 	}
 
@@ -183,21 +211,20 @@ func collectRootURLs(root map[string]interface{}) map[string]bool {
 	return existing
 }
 
-// collectURLs 递归收集所有书签 URL
+// collectURLs 递归收集所有书签 URL（有 url 字段即收集，规范化后去重）
 func collectURLs(nodes []interface{}, out map[string]bool) {
 	for _, n := range nodes {
 		node, ok := n.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		if node["type"] == "url" {
-			if u, ok := node["url"].(string); ok {
-				out[u] = true
+		if u, ok := node["url"].(string); ok {
+			if normalized := NormalizeBookmarkURL(u); normalized != "" {
+				out[normalized] = true
 			}
-		} else if node["type"] == "folder" {
-			if sub, ok := node["children"].([]interface{}); ok {
-				collectURLs(sub, out)
-			}
+		}
+		if sub, ok := node["children"].([]interface{}); ok {
+			collectURLs(sub, out)
 		}
 	}
 }

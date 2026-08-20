@@ -62,6 +62,7 @@ func (a *App) startBrowserProfileWithPlan(input browserStartInput, plan *browser
 					)
 				}
 			}
+			scheduleUnwantedExtensionStartupTabSweep(stableDebugPort)
 
 			log.Info("实例启动",
 				logger.F("profile_id", input.ProfileID),

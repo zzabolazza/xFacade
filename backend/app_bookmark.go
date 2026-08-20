@@ -49,7 +49,7 @@ func (a *App) BookmarkSave(items []BrowserBookmark) error {
 	valid := make([]BrowserBookmark, 0, len(items))
 	for _, item := range items {
 		name := strings.TrimSpace(item.Name)
-		url := strings.TrimSpace(item.URL)
+		url := browser.NormalizeBookmarkURL(item.URL)
 		if name != "" && url != "" {
 			valid = append(valid, BrowserBookmark{Name: name, URL: url, OpenOnStart: item.OpenOnStart})
 		}
@@ -81,7 +81,7 @@ func mergeBookmarksByURL(items []BrowserBookmark, required []BrowserBookmark) []
 	seen := make(map[string]struct{}, len(items)+len(required))
 	appendOne := func(item BrowserBookmark) {
 		name := strings.TrimSpace(item.Name)
-		url := strings.TrimSpace(item.URL)
+		url := browser.NormalizeBookmarkURL(item.URL)
 		if name == "" || url == "" {
 			return
 		}

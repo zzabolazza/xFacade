@@ -6,6 +6,7 @@ export interface NavItem {
 
 export const navigationConfig: NavItem[] = [
   { name: '实例列表', path: '/browser/list', icon: 'Monitor' },
+  { name: '输入同步', path: '/browser/input-sync', icon: 'MousePointer2' },
   { name: '内核管理', path: '/browser/cores', icon: 'Cpu' },
   { name: '插件管理', path: '/browser/extensions', icon: 'Puzzle' },
   { name: '代理配置', path: '/browser/proxy-pool', icon: 'Globe' },

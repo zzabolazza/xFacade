@@ -86,6 +86,9 @@ export interface BrowserInputSyncTargetStatus {
   nextRecoverAt?: string
   failureCount: number
   droppedActionCount: number
+  waitingForPageLoad: boolean
+  pageLoadWaitReason?: string
+  pageLoadWaitStartedAt?: string
   warning?: string
 }
 
