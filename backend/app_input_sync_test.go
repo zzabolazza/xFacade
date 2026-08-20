@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -231,6 +232,82 @@ func TestInputSyncPausedTargetDropsActions(t *testing.T) {
 	}
 	if got := target.droppedActions.Load(); got != 1 {
 		t.Fatalf("expected one dropped action, got %d", got)
+	}
+}
+
+func TestInputSyncTabClosedUnbindsAndClosesClient(t *testing.T) {
+	client := &inputSyncPageClient{targetID: "target-1", done: make(chan struct{})}
+	target := &inputSyncTarget{clients: map[string]*inputSyncPageClient{"source-1": client}, activeSourceID: "source-1", client: client}
+
+	err := target.applyTabAction(inputSyncAction{
+		Kind:           "tab",
+		Type:           "closed",
+		SourceTargetID: "source-1",
+	})
+	if err != nil {
+		t.Fatalf("expected tab close to succeed, got %v", err)
+	}
+	if got := target.exactClientForSource("source-1"); got != nil {
+		t.Fatal("expected source client to be unbound")
+	}
+	if target.getClient() != nil {
+		t.Fatal("expected active client to be cleared")
+	}
+	select {
+	case <-client.done:
+	default:
+		t.Fatal("expected client connection to be closed")
+	}
+}
+
+func TestInputSyncMasterClientDoneDispatchesTabClosed(t *testing.T) {
+	sourceClient := &inputSyncPageClient{
+		targetID:    "source-tab-1",
+		targetURL:   "https://example.test/closed",
+		targetTitle: "Closed",
+		events:      make(chan inputSyncWireEvent),
+		done:        make(chan struct{}),
+	}
+	targetClient := &inputSyncPageClient{targetID: "target-tab-1", done: make(chan struct{})}
+	target := &inputSyncTarget{
+		profileID: "target-profile",
+		name:      "Target",
+		clients:   make(map[string]*inputSyncPageClient),
+		queue:     make(chan inputSyncAction, 1),
+	}
+	target.bindClient(sourceClient.targetID, targetClient)
+	session := &inputSyncSession{
+		id:            "session-1",
+		masterClients: map[string]*inputSyncPageClient{sourceClient.targetID: sourceClient},
+		master:        sourceClient,
+		targets:       []*inputSyncTarget{target},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		session.forwardMasterClientEvents(context.Background(), sourceClient)
+		close(done)
+	}()
+	close(sourceClient.done)
+
+	select {
+	case action := <-target.queue:
+		if action.Kind != "tab" || action.Type != "closed" {
+			t.Fatalf("expected tab closed action, got kind=%s type=%s", action.Kind, action.Type)
+		}
+		if action.SourceTargetID != sourceClient.targetID {
+			t.Fatalf("expected source target id %q, got %q", sourceClient.targetID, action.SourceTargetID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected tab closed action to be dispatched")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("expected master event forwarder to exit")
+	}
+	if session.hasMasterClient(sourceClient.targetID) {
+		t.Fatal("expected source client to be removed")
 	}
 }
 

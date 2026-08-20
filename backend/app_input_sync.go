@@ -1417,13 +1417,15 @@ func (s *inputSyncSession) addMasterClient(ctx context.Context, client *inputSyn
 	go s.forwardMasterClientEvents(ctx, client)
 }
 
-func (s *inputSyncSession) removeMasterClient(targetID string, client *inputSyncPageClient) {
+func (s *inputSyncSession) removeMasterClient(targetID string, client *inputSyncPageClient) bool {
 	if s == nil {
-		return
+		return false
 	}
+	removed := false
 	s.mu.Lock()
 	if existing := s.masterClients[targetID]; existing == client {
 		delete(s.masterClients, targetID)
+		removed = true
 	}
 	if s.master == client {
 		s.master = nil
@@ -1435,6 +1437,7 @@ func (s *inputSyncSession) removeMasterClient(targetID string, client *inputSync
 		}
 	}
 	s.mu.Unlock()
+	return removed
 }
 
 func (s *inputSyncSession) forwardMasterClientEvents(ctx context.Context, client *inputSyncPageClient) {
@@ -1447,7 +1450,16 @@ func (s *inputSyncSession) forwardMasterClientEvents(ctx context.Context, client
 		case <-ctx.Done():
 			return
 		case <-client.done:
-			s.removeMasterClient(targetID, client)
+			removed := s.removeMasterClient(targetID, client)
+			if removed && ctx.Err() == nil {
+				s.dispatchSystemEvent(inputSyncWireEvent{
+					Kind:           "tab",
+					Type:           "closed",
+					URL:            client.targetURL,
+					Title:          client.targetTitle,
+					SourceTargetId: client.targetID,
+				})
+			}
 			logInputSyncTrace("输入同步主控页面目标已断开",
 				logger.F("session_id", s.id),
 				logger.F("target_id", client.targetID),
@@ -2714,7 +2726,7 @@ func (t *inputSyncTarget) applyTabAction(action inputSyncAction) error {
 	case "closed":
 		client := t.unbindClient(sourceTargetID)
 		if client != nil {
-			client.Close()
+			return client.ClosePageTarget()
 		}
 		return nil
 	case "created", "activated":
@@ -3452,6 +3464,25 @@ func (c *inputSyncPageClient) Close() {
 		}
 		close(c.done)
 	})
+}
+
+func (c *inputSyncPageClient) ClosePageTarget() error {
+	if c == nil {
+		return nil
+	}
+	var err error
+	targetID := strings.TrimSpace(c.targetID)
+	if c.browser != nil && targetID != "" && !c.isClosed() {
+		ctx, cancel := context.WithTimeout(context.Background(), inputSyncCommandTimeout)
+		_, err = proto.TargetCloseTarget{TargetID: proto.TargetTargetID(targetID)}.Call(c.browser.Context(ctx))
+		cancel()
+	} else if c.page != nil && !c.isClosed() {
+		ctx, cancel := context.WithTimeout(context.Background(), inputSyncCommandTimeout)
+		err = c.page.Context(ctx).Close()
+		cancel()
+	}
+	c.Close()
+	return err
 }
 
 func (c *inputSyncPageClient) eventLoop() {

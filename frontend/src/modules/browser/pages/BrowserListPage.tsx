@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import { Button, Modal, toast } from '../../../shared/components'
 import { flushThemeForBackup } from '../../../shared/theme/theme'
-import type { BrowserInputSyncStatus, BrowserProfile, BrowserProfileCopyOptions, BrowserProxy } from '../types'
+import type { BrowserInputSyncStatus, BrowserProfile, BrowserProfileCopyOptions, BrowserProxy, BrowserWindowTileRequest } from '../types'
 import { BrowserListHeader } from '../components/BrowserListLayout'
 import { BatchToolbar } from '../components/BrowserListWidgets'
 import { BrowserProfilesPanel } from '../components/BrowserProfilesPanel'
@@ -72,8 +72,16 @@ function orderTilingTargetsForInputSync(
   masterProfileId: string | undefined,
   inputSyncRunning: boolean,
 ): BrowserProfile[] {
+  if (!inputSyncRunning) return targets
+  return orderTilingTargetsByMaster(targets, masterProfileId)
+}
+
+function orderTilingTargetsByMaster(
+  targets: BrowserProfile[],
+  masterProfileId: string | undefined,
+): BrowserProfile[] {
   const masterId = (masterProfileId || '').trim()
-  if (!inputSyncRunning || !masterId) return targets
+  if (!masterId) return targets
   const masterIndex = targets.findIndex(profile => profile.profileId === masterId)
   if (masterIndex <= 0) return targets
   return [
@@ -81,6 +89,29 @@ function orderTilingTargetsForInputSync(
     ...targets.slice(0, masterIndex),
     ...targets.slice(masterIndex + 1),
   ]
+}
+
+interface BrowserRetileResult {
+  success: number
+  failed: number
+  failureMessages: string[]
+  notReadyProfileIds: Set<string>
+}
+
+function buildWindowTileRequests(targets: BrowserProfile[]): BrowserWindowTileRequest[] {
+  const tiles = buildBrowserWindowTiles(targets.length)
+  return targets.map((profile, index) => {
+    const tile = tiles[index]
+    return {
+      profileId: profile.profileId,
+      bounds: {
+        left: tile?.x || 0,
+        top: tile?.y || 0,
+        width: tile?.width || 1,
+        height: tile?.height || 1,
+      },
+    }
+  })
 }
 
 export function BrowserListPage() {
@@ -297,8 +328,72 @@ export function BrowserListPage() {
     loadProfiles()
   }
 
-  const restoreInputSyncMasterFocusAfterTiling = async (tiledTargets: BrowserProfile[]) => {
-    const masterId = inputSyncStatus?.running ? inputSyncStatus.masterProfileId : ''
+  const retileBrowserProfiles = async (runningTargets: BrowserProfile[]): Promise<BrowserRetileResult> => {
+    const tileRequests = buildWindowTileRequests(runningTargets)
+    const retileResult: BrowserRetileResult = {
+      success: 0,
+      failed: 0,
+      failureMessages: [],
+      notReadyProfileIds: new Set<string>(),
+    }
+    const recordProblem = (profileId: string, profileName: string, message: string, notReady: boolean) => {
+      retileResult.failed += 1
+      if (notReady) retileResult.notReadyProfileIds.add(profileId)
+      retileResult.failureMessages.push(`${profileName || profileId}：${message}`)
+    }
+
+    setRetileLoading(true)
+    try {
+      try {
+        const batchResults = await setBrowserInstancesWindowBounds(tileRequests, true)
+        if (batchResults) {
+          const seenProfileIds = new Set<string>()
+          batchResults.forEach((result) => {
+            const profileId = result.profileId
+            seenProfileIds.add(profileId)
+            if (result.ready && !result.warning) {
+              retileResult.success += 1
+            } else {
+              recordProblem(
+                profileId,
+                result.profileName || profileId,
+                result.warning || '平铺后未能读取实际窗口/视口',
+                !result.ready,
+              )
+            }
+          })
+          for (const profile of runningTargets) {
+            if (!seenProfileIds.has(profile.profileId)) {
+              recordProblem(profile.profileId, profile.profileName, '平铺结果缺失', true)
+            }
+          }
+          return retileResult
+        }
+      } catch {
+        // Batch tiling is best-effort; fall back to per-window updates below.
+      }
+
+      for (let index = 0; index < runningTargets.length; index += 1) {
+        const profile = runningTargets[index]
+        const request = tileRequests[index]
+        if (!profile || !request) continue
+        try {
+          const updatedProfile = await setBrowserInstanceWindowBounds(profile.profileId, request.bounds)
+          mergeProfileState(updatedProfile)
+          retileResult.success += 1
+        } catch (error: any) {
+          const feedback = resolveActionFeedback(error, '平铺失败')
+          recordProblem(profile.profileId, profile.profileName, feedback.message, true)
+        }
+      }
+      return retileResult
+    } finally {
+      setRetileLoading(false)
+    }
+  }
+
+  const restoreInputSyncMasterFocusAfterTiling = async (tiledTargets: BrowserProfile[], explicitMasterId?: string) => {
+    const masterId = explicitMasterId || (inputSyncStatus?.running ? inputSyncStatus.masterProfileId : '')
     if (!masterId || !tiledTargets.some(profile => profile.profileId === masterId)) return
     try {
       const result = await focusBrowserInstance(masterId)
@@ -322,77 +417,15 @@ export function BrowserListPage() {
       return
     }
 
-    const tiles = buildBrowserWindowTiles(runningTargets.length)
-    setRetileLoading(true)
-    let success = 0, failed = 0
-    const failureMessages: string[] = []
-    const tileRequests = runningTargets.map((profile, index) => {
-      const tile = tiles[index]
-      return {
-        profileId: profile.profileId,
-        bounds: {
-          left: tile?.x || 0,
-          top: tile?.y || 0,
-          width: tile?.width || 1,
-          height: tile?.height || 1,
-        },
-      }
-    })
-
-    try {
-      const batchResults = await setBrowserInstancesWindowBounds(tileRequests, true)
-      if (batchResults) {
-        batchResults.forEach((result) => {
-          if (result.ready && !result.warning) {
-            success++
-          } else {
-            failed++
-            failureMessages.push(`${result.profileName || result.profileId}：${result.warning || '平铺后未能读取实际窗口/视口'}`)
-          }
-        })
-        setRetileLoading(false)
-        if (success > 0) {
-          toast.success(`平铺完成：成功 ${success}${failed > 0 ? `，失败 ${failed}` : ''}`)
-        } else {
-          toast.error(`平铺失败：失败 ${failed}`)
-        }
-        if (failureMessages.length > 0) {
-          const preview = failureMessages.slice(0, 3)
-          const more = failureMessages.length > preview.length ? `\n另有 ${failureMessages.length - preview.length} 个实例平铺失败。` : ''
-          toast.error(`以下实例平铺失败：\n${preview.join('\n')}${more}`)
-        }
-        await restoreInputSyncMasterFocusAfterTiling(runningTargets)
-        await loadProfiles({ silent: true, syncRuntimeState: true })
-        return
-      }
-    } catch (error: any) {
-      const feedback = resolveActionFeedback(error, '平铺失败')
-      failureMessages.push(feedback.message)
-    }
-
-    for (let index = 0; index < runningTargets.length; index += 1) {
-      const profile = runningTargets[index]
-      const request = tileRequests[index]
-      if (!request) continue
-      try {
-        const updatedProfile = await setBrowserInstanceWindowBounds(profile.profileId, request.bounds)
-        mergeProfileState(updatedProfile)
-        success++
-      } catch (error: any) {
-        failed++
-        const feedback = resolveActionFeedback(error, '平铺失败')
-        failureMessages.push(`${profile.profileName}：${feedback.message}`)
-      }
-    }
-    setRetileLoading(false)
-    if (success > 0) {
-      toast.success(`平铺完成：成功 ${success}${failed > 0 ? `，失败 ${failed}` : ''}`)
+    const result = await retileBrowserProfiles(runningTargets)
+    if (result.success > 0) {
+      toast.success(`平铺完成：成功 ${result.success}${result.failed > 0 ? `，失败 ${result.failed}` : ''}`)
     } else {
-      toast.error(`平铺失败：失败 ${failed}`)
+      toast.error(`平铺失败：失败 ${result.failed}`)
     }
-    if (failureMessages.length > 0) {
-      const preview = failureMessages.slice(0, 3)
-      const more = failureMessages.length > preview.length ? `\n另有 ${failureMessages.length - preview.length} 个实例平铺失败。` : ''
+    if (result.failureMessages.length > 0) {
+      const preview = result.failureMessages.slice(0, 3)
+      const more = result.failureMessages.length > preview.length ? `\n另有 ${result.failureMessages.length - preview.length} 个实例平铺失败。` : ''
       toast.error(`以下实例平铺失败：\n${preview.join('\n')}${more}`)
     }
     await restoreInputSyncMasterFocusAfterTiling(runningTargets)
@@ -417,9 +450,24 @@ export function BrowserListPage() {
       return
     }
     const master = runningTargets.find(profile => profile.profileId === inputSyncMasterId) || runningTargets[0]
-    const targets = runningTargets.filter(profile => profile.profileId !== master.profileId)
+    const orderedTargets = orderTilingTargetsByMaster(runningTargets, master.profileId)
+    const targets = orderedTargets.filter(profile => profile.profileId !== master.profileId)
     setInputSyncLoading(true)
     try {
+      const retileResult = await retileBrowserProfiles(orderedTargets)
+      if (retileResult.notReadyProfileIds.has(master.profileId)) {
+        const masterFailure = retileResult.failureMessages.find(message => message.startsWith(`${master.profileName || master.profileId}：`))
+        toast.error(`主控浏览器平铺失败，输入同步未启动${masterFailure ? `：\n${masterFailure}` : ''}`)
+        await loadProfiles({ silent: true, syncRuntimeState: true })
+        return
+      }
+      if (retileResult.failureMessages.length > 0) {
+        const preview = retileResult.failureMessages.slice(0, 3)
+        const more = retileResult.failureMessages.length > preview.length ? `\n另有 ${retileResult.failureMessages.length - preview.length} 个实例有平铺提示。` : ''
+        toast.warning(`部分实例平铺/视口校正提示：\n${preview.join('\n')}${more}`)
+      }
+      await restoreInputSyncMasterFocusAfterTiling(orderedTargets, master.profileId)
+      await loadProfiles({ silent: true, syncRuntimeState: true })
       const status = await startBrowserInputSync({
         masterProfileId: master.profileId,
         targetProfileIds: targets.map(profile => profile.profileId),
@@ -884,7 +932,7 @@ export function BrowserListPage() {
               loading={inputSyncLoading}
               disabled={!resolvedInputSyncMaster || selectedRunningProfiles.length < 2}
             >
-              开始同步
+              平铺并开始同步
             </Button>
           </>
         }
