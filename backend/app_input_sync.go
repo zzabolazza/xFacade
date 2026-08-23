@@ -3604,6 +3604,47 @@ func (t *inputSyncTarget) applyTabAction(action inputSyncAction) error {
 			}
 			return nil
 		case inputSyncTabPlanCreate:
+			// 鼠标事件同步可能触发从浏览器原生打开 tab（位置正确），
+			// 优先复用它而不是用 CDP 在末尾创建新的。
+			// 短重试循环应对竞态：created 事件可能先于鼠标事件到达。
+			deadline := time.Now().Add(600 * time.Millisecond)
+			for {
+				if livePages, listErr := listInputSyncPageTargets(t.debugPort); listErr == nil {
+					mapped := t.mappedTabIDs()
+					for _, page := range livePages {
+						if _, ok := mapped[page.id]; ok {
+							continue
+						}
+						if client, viewport, openErr := openInputSyncPageClientForTarget(
+							"target", t.profileID, t.name, t.debugPort, page, false,
+						); openErr == nil {
+							t.bindClient(sourceTargetID, client)
+							t.markOwnedTab(client.targetID)
+							t.viewport = viewport
+							if rawURL := strings.TrimSpace(action.Event.URL); rawURL != "" {
+								t.setExpectedURL(sourceTargetID, rawURL)
+								if inputSyncCanNavigate(rawURL) {
+									_ = client.ApplyAction(inputSyncAction{
+										SessionID:      action.SessionID,
+										Kind:           "navigation",
+										Type:           "resync",
+										SourceTargetID: sourceTargetID,
+										Event:          inputSyncWireEvent{URL: rawURL},
+										CreatedAt:      time.Now(),
+									})
+								}
+							}
+							return nil
+						}
+					}
+				}
+				if !time.Now().Before(deadline) {
+					break
+				}
+				time.Sleep(150 * time.Millisecond)
+			}
+			// 回退到创建新 tab 的原有逻辑。先清理可能残留的未映射 tab。
+			t.closeUnmappedTabs()
 			client, viewport, err := openInputSyncNewPageClient("target", t.profileID, t.name, t.debugPort, action.Event.URL)
 			if err != nil {
 				return err
@@ -3778,7 +3819,6 @@ func (t *inputSyncTarget) verifyState(ctx context.Context, session *inputSyncSes
 	if t.isPaused() {
 		return
 	}
-	t.closeUnmappedTabs()
 	for _, entry := range t.clientSourceSnapshot() {
 		if t.isPaused() || ctx.Err() != nil {
 			return
