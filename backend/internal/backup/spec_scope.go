@@ -119,7 +119,7 @@ func BuildManifest(scope Scope, appName, appVersion string, createdAt time.Time)
 	}
 	name := strings.TrimSpace(appName)
 	if name == "" {
-		name = "Facade"
+		name = "xFacade"
 	}
 	version := strings.TrimSpace(appVersion)
 	if version == "" {

@@ -121,22 +121,22 @@ fi
 
 TARGET="linux-$ARCH"
 APP_ICON_SRC="$ROOT_DIR/build/appicon.png"
-APP_BIN="$ROOT_DIR/build/bin/facade"
+APP_BIN="$ROOT_DIR/build/bin/xFacade"
 WAILS_CONFIG="$ROOT_DIR/wails.json"
 APP_PACKAGE_NAME="facade"
-APP_BINARY_NAME="facade"
+APP_BINARY_NAME="xFacade"
 APP_ICON_NAME="facade"
 APP_DESKTOP_ID="facade.desktop"
 APPSTREAM_ID="facade"
-APP_NAME="Facade"
+APP_NAME="xFacade"
 APP_SUMMARY="Multi-profile browser launcher with proxy-pool management"
-APP_MAINTAINER="Facade Team"
+APP_MAINTAINER="xFacade Team"
 APP_HOMEPAGE="https://github.com/zzabolazza/Facade"
 BUILD_DATE_UTC="$(date -u +%F)"
 ICON_SIZES=(16 24 32 48 64 128 256 512)
 
 echo "========================================"
-echo "  Facade Linux Publish"
+echo "  xFacade Linux Publish"
 echo "========================================"
 echo "Target : $TARGET"
 echo "Version: $VERSION"
@@ -171,7 +171,7 @@ if [[ "$SKIP_BUILD" -ne 1 ]]; then
   fi
   (
     cd "$ROOT_DIR"
-    BROWSERSLIST_IGNORE_OLD_DATA=1 wails build -platform "linux/$ARCH" "${WAILS_BUILD_TAGS[@]}" -o facade
+    BROWSERSLIST_IGNORE_OLD_DATA=1 wails build -platform "linux/$ARCH" "${WAILS_BUILD_TAGS[@]}" -o xFacade
   )
 else
   echo "[WARN] skipping build step"
@@ -208,12 +208,12 @@ DEB_STAGE="$STAGING_ROOT/$TARGET/deb"
 rm -rf "$APP_STAGE" "$DEB_STAGE"
 mkdir -p "$APP_STAGE" "$DEB_STAGE"
 
-cp "$APP_BIN" "$APP_STAGE/facade"
+cp "$APP_BIN" "$APP_STAGE/xFacade"
 cp "$ROOT_DIR/publish/config.init.linux.yaml" "$APP_STAGE/config.yaml"
-chmod +x "$APP_STAGE/facade"
+chmod +x "$APP_STAGE/xFacade"
 
 mkdir -p "$OUTPUT_DIR"
-TAR_NAME="Facade-${VERSION}-linux-${ARCH}.tar.gz"
+TAR_NAME="xFacade-${VERSION}-linux-${ARCH}.tar.gz"
 tar -C "$APP_STAGE" -czf "$OUTPUT_DIR/$TAR_NAME" .
 
 PKG_ROOT="$DEB_STAGE/${APP_PACKAGE_NAME}_${VERSION}_${ARCH}"
@@ -228,7 +228,7 @@ for size in "${ICON_SIZES[@]}"; do
   mkdir -p "$ICON_THEME_ROOT/${size}x${size}/apps"
 done
 
-cp "$APP_STAGE/facade" "$INSTALL_ROOT/facade"
+cp "$APP_STAGE/xFacade" "$INSTALL_ROOT/xFacade"
 cp "$APP_STAGE/config.yaml" "$INSTALL_ROOT/config.yaml"
 cp "$APP_ICON_SRC" "$ICON_THEME_ROOT/512x512/apps/${APP_ICON_NAME}.png"
 for size in "${ICON_SIZES[@]}"; do
@@ -237,7 +237,7 @@ for size in "${ICON_SIZES[@]}"; do
   fi
 done
 ln -sf "../icons/hicolor/512x512/apps/${APP_ICON_NAME}.png" "$PIXMAPS_ROOT/${APP_ICON_NAME}.png"
-chmod +x "$INSTALL_ROOT/facade"
+chmod +x "$INSTALL_ROOT/xFacade"
 
 cat > "$DESKTOP_ROOT/$APP_DESKTOP_ID" <<EOF
 [Desktop Entry]
@@ -247,7 +247,7 @@ Comment=${APP_SUMMARY}
 Exec=/opt/facade/${APP_BINARY_NAME}
 TryExec=/opt/facade/${APP_BINARY_NAME}
 Icon=${APP_ICON_NAME}
-StartupWMClass=Facade
+StartupWMClass=xFacade
 Terminal=false
 Type=Application
 StartupNotify=true
@@ -270,7 +270,7 @@ cat > "$METAINFO_ROOT/${APP_PACKAGE_NAME}.metainfo.xml" <<EOF
     <binary>${APP_BINARY_NAME}</binary>
   </provides>
   <description>
-    <p>Facade manages isolated browser profiles, proxy binding, and local environment configuration for multi-account workflows.</p>
+    <p>xFacade manages isolated browser profiles, proxy binding, and local environment configuration for multi-account workflows.</p>
     <p>The Debian package installs a launcher and theme icons for standard Linux desktop environments.</p>
   </description>
   <categories>
@@ -309,15 +309,17 @@ Installed-Size: ${INSTALLED_SIZE_KB}
 Depends: libc6 (>= 2.31), libgtk-3-0, libglib2.0-0, ${WEBKIT_DEB_DEP}
 Description: ${APP_NAME} desktop app
  Multi-profile browser launcher with proxy-pool management.
- Facade manages isolated browser profiles, proxy binding, and
+ xFacade manages isolated browser profiles, proxy binding, and
  local environment configuration for multi-account workflows.
 EOF
 
 cat > "$PKG_ROOT/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
-ln -sf /opt/facade/facade /usr/bin/facade
-chmod +x /opt/facade/facade || true
+ln -sf /opt/facade/xFacade /usr/bin/xFacade
+# Compatibility alias for existing desktop launchers and scripts.
+ln -sf /opt/facade/xFacade /usr/bin/facade
+chmod +x /opt/facade/xFacade || true
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 fi
@@ -337,7 +339,7 @@ cat > "$PKG_ROOT/DEBIAN/postrm" <<'EOF'
 #!/bin/sh
 set -e
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
-  rm -f /usr/bin/facade
+  rm -f /usr/bin/xFacade /usr/bin/facade
 fi
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
@@ -356,7 +358,7 @@ EOF
 
 chmod 0755 "$PKG_ROOT/DEBIAN/postinst" "$PKG_ROOT/DEBIAN/postrm"
 
-DEB_NAME="${APP_PACKAGE_NAME}_${VERSION}_${ARCH}.deb"
+DEB_NAME="xFacade-${VERSION}-linux-${ARCH}.deb"
 if dpkg-deb --help 2>/dev/null | grep -q -- '--root-owner-group'; then
   dpkg-deb --root-owner-group --build "$PKG_ROOT" "$OUTPUT_DIR/$DEB_NAME" >/dev/null
 else

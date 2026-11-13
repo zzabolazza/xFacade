@@ -25,7 +25,7 @@ func normalizeConfig(config *Config) {
 		config.Database.SQLite.Path = defaultConfig.Database.SQLite.Path
 	}
 
-	if strings.TrimSpace(config.App.Name) == "" {
+	if strings.TrimSpace(config.App.Name) == "" || strings.EqualFold(strings.TrimSpace(config.App.Name), "Facade") {
 		config.App.Name = defaultConfig.App.Name
 	}
 	if config.App.Window.Width <= 0 {
@@ -183,7 +183,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		App: AppConfig{
-			Name: "Facade",
+			Name: "xFacade",
 			Window: WindowConfig{
 				Width:     1750,
 				Height:    1000,

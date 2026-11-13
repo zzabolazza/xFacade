@@ -99,23 +99,23 @@ jobs:
       - name: Validate portable zip layout
         run: |
           set -euo pipefail
-          zip_file="publish/output/Facade-${VERSION}-windows-${{ matrix.arch }}.zip"
-          installer_file="publish/output/Facade-Setup-${VERSION}-${{ matrix.arch }}.exe"
+          zip_file="publish/output/xFacade-${VERSION}-windows-${{ matrix.arch }}.zip"
+          installer_file="publish/output/xFacade-setup-${VERSION}-${{ matrix.arch }}.exe"
           validate_dir="$(mktemp -d)"
           echo "Validating: $zip_file"
           test -f "$zip_file"
           test -f "$installer_file"
           powershell -NoProfile -Command "Expand-Archive -Path '$(cygpath -w "$zip_file")' -DestinationPath '$(cygpath -w "$validate_dir")' -Force"
-          test -f "$validate_dir/facade.exe"
+          test -f "$validate_dir/xFacade.exe"
           test -f "$validate_dir/config.yaml"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: facade-${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}
+          name: xFacade-${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}
           path: |
-            publish/output/Facade-*-windows-${{ matrix.arch }}.zip
-            publish/output/Facade-Setup-*-${{ matrix.arch }}.exe
+            publish/output/xFacade-*-windows-${{ matrix.arch }}.zip
+            publish/output/xFacade-setup-*-${{ matrix.arch }}.exe
           if-no-files-found: error
 
   release:

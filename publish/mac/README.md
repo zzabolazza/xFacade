@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the macOS packaging plan for Facade.
+This document defines the macOS packaging plan for xFacade.
 
 The goal is to turn the current codebase into a macOS build that can:
 
@@ -11,7 +11,7 @@ The goal is to turn the current codebase into a macOS build that can:
 - keep user-writable state outside the `.app` bundle
 - avoid breaking existing Windows and Linux packaging flows
 
-Facade only uses Chromium-native proxy links (`direct://` / `http://` / `https://` / `socks5://`),
+xFacade only uses Chromium-native proxy links (`direct://` / `http://` / `https://` / `socks5://`),
 so packages do **not** bundle any external proxy engine binaries.
 
 ## Current Entry Command
@@ -58,7 +58,7 @@ The repository now includes writable-state handling for all platforms:
 
 The current macOS packaging scaffold places seed config under:
 
-- `Facade.app/Contents/MacOS/config.yaml`
+- `xFacade.app/Contents/MacOS/config.yaml`
 
 This matches runtime path resolution for the install root seed file, while writable state is redirected to Application Support.
 
@@ -105,8 +105,8 @@ Why:
 
 Recommended structure inside the built app:
 
-- `Facade.app/Contents/MacOS/facade`
-- `Facade.app/Contents/MacOS/config.yaml` (seed only; copied to state root on first launch if missing)
+- `xFacade.app/Contents/MacOS/xFacade`
+- `xFacade.app/Contents/MacOS/config.yaml` (seed only; copied to state root on first launch if missing)
 
 ### User-Writable State
 

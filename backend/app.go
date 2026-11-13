@@ -62,7 +62,7 @@ func (a *App) appName() string {
 			return name
 		}
 	}
-	return "Facade"
+	return "xFacade"
 }
 
 func (a *App) appVersion() string {

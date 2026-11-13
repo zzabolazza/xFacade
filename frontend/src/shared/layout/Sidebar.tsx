@@ -68,13 +68,13 @@ export function Sidebar() {
       >
         <img
           src="/appicon.png"
-          alt="Facade"
+          alt="xFacade"
           className="h-[30px] w-[30px] shrink-0 rounded-lg object-cover shadow-[inset_0_0_0_1px_rgb(255_255_255_/_0.14)]"
         />
         {!sidebarCollapsed && (
           <div className="min-w-0 text-center">
             <div className="truncate text-[15px] font-extrabold tracking-tight text-white max-sm:hidden">
-              {projectConfig.name}
+              {projectConfig.name.toUpperCase()}
             </div>
             <div className="font-mono text-[10px] tracking-[0.08em] text-[#6d7186] max-sm:hidden">
               Endless Faces

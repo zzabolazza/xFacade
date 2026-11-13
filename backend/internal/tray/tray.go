@@ -27,8 +27,8 @@ func Run(cb Callbacks) {
 
 	systray.Run(func() {
 		systray.SetIcon(iconData)
-		systray.SetTitle("Facade")
-		systray.SetTooltip("Facade")
+		systray.SetTitle("xFacade")
+		systray.SetTooltip("xFacade")
 
 		mShow := systray.AddMenuItem("显示窗口", "显示主窗口")
 		systray.AddSeparator()

@@ -1,4 +1,4 @@
-# Facade
+# xFacade
 
 > One Facade. Endless Faces.
 
@@ -49,9 +49,9 @@
 
 | 平台 | 方式 |
 |------|------|
-| **Windows** | 下载 `Facade-Setup-*.exe` 安装，或解压便携版运行 `facade.exe` |
-| **Linux** | `sudo apt install ./facade_<version>_<arch>.deb`（推荐，自动安装依赖）；或解压 `.tar.gz` 后运行 `facade` |
-| **macOS** | 解压 `Facade-*.app`，首次运行执行 `xattr -dr com.apple.quarantine Facade.app` |
+| **Windows** | 下载 `xFacade-setup-*.exe` 安装，或解压便携版运行 `xFacade.exe` |
+| **Linux** | `sudo apt install ./xFacade-<version>-linux-<arch>.deb`（推荐，自动安装依赖）；或解压 `.tar.gz` 后运行 `xFacade` |
+| **macOS** | 解压 `xFacade-*.app`，首次运行执行 `xattr -dr com.apple.quarantine xFacade.app` |
 
 前往 [Releases](https://github.com/zzabolazza/Facade/releases) 下载最新版本。
 

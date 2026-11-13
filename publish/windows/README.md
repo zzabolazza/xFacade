@@ -7,12 +7,12 @@
 
 Output artifacts (in `publish/output/`):
 
-- `Facade-<version>-windows-<arch>.zip` — portable build (`facade.exe` + `config.yaml`)
-- `Facade-Setup-<version>-<arch>.exe` — NSIS installer (only when `makensis` is available)
+- `xFacade-<version>-windows-<arch>.zip` — portable build (`xFacade.exe` + `config.yaml`)
+- `xFacade-setup-<version>-<arch>.exe` — NSIS installer (only when `makensis` is available)
 
 ## Runtime policy
 
-Facade only uses Chromium-native proxy links (`direct://` / `http://` / `https://` / `socks5://`),
+xFacade only uses Chromium-native proxy links (`direct://` / `http://` / `https://` / `socks5://`),
 so Windows packages do **not** bundle browser cores or any external proxy engine binaries.
 
 Writable app state (config, database, profiles, logs) is stored under
@@ -30,7 +30,7 @@ bash publish/windows/publish-windows.sh --arch arm64
 Options:
 
 - `--version <ver>` override the version (default reads `wails.json`)
-- `--skip-build` reuse an existing `build/bin/facade.exe`
+- `--skip-build` reuse an existing `build/bin/xFacade.exe`
 - `--skip-installer` produce only the portable zip
 - `--keep-staging` keep the staging directory
 

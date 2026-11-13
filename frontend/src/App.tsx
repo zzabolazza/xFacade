@@ -308,7 +308,7 @@ function CloseConfirmModal() {
     <Modal
       open={open}
       onClose={closeModal}
-      title={importInProgress ? "关闭应用" : "退出 Facade"}
+      title={importInProgress ? "关闭应用" : "退出 xFacade"}
       width="440px"
       closable={!quitting}
     >

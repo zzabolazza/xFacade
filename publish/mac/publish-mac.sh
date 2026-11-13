@@ -115,10 +115,10 @@ fi
 TARGET="darwin-$ARCH"
 APP_BIN_DIR="$ROOT_DIR/build/bin"
 CONFIG_INIT_SRC="$ROOT_DIR/publish/config.init.mac.yaml"
-ZIP_NAME="Facade-${VERSION}-macos-${ARCH}.zip"
-APP_EXPORT="$OUTPUT_DIR/Facade-${VERSION}-macos-${ARCH}.app"
+ZIP_NAME="xFacade-${VERSION}-macos-${ARCH}.zip"
+APP_EXPORT="$OUTPUT_DIR/xFacade-${VERSION}-macos-${ARCH}.app"
 STAGE_DIR="$STAGING_ROOT/$TARGET"
-APP_STAGE="$STAGE_DIR/Facade.app"
+APP_STAGE="$STAGE_DIR/xFacade.app"
 
 find_built_app_bundle() {
   python3 - "$APP_BIN_DIR" <<'PY'
@@ -139,7 +139,7 @@ PY
 }
 
 echo "========================================"
-echo "  Facade macOS Publish"
+echo "  xFacade macOS Publish"
 echo "========================================"
 echo "Target : $TARGET"
 echo "Version: $VERSION"
@@ -155,7 +155,7 @@ if [[ "$SKIP_BUILD" -ne 1 ]]; then
   echo "[1/2] Building macOS app bundle and frontend assets with Wails..."
   (
     cd "$ROOT_DIR"
-    BROWSERSLIST_IGNORE_OLD_DATA=1 wails build -platform "darwin/$ARCH" -o facade
+    BROWSERSLIST_IGNORE_OLD_DATA=1 wails build -platform "darwin/$ARCH" -o xFacade
   )
 else
   echo "[WARN] skipping build step"

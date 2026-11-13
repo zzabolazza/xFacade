@@ -33,7 +33,7 @@ func EnsureManagedExtension(userDataDir string, opts ManagedExtensionOptions) (s
 		info.Color = identityColorPalette[0]
 	}
 	if info.Name == "" {
-		info.Name = "Facade"
+		info.Name = "xFacade"
 	}
 	if info.Proxy == "" {
 		info.Proxy = "直连"
@@ -113,9 +113,9 @@ func buildManagedExtensionManifest(enableVoices bool) (string, error) {
 
 	payload, err := json.MarshalIndent(manifest{
 		ManifestVersion: 3,
-		Name:            "Facade Managed Extension",
+		Name:            "xFacade Managed Extension",
 		Version:         "1.2.0",
-		Description:     "Facade managed identity badge and optional privacy shims.",
+		Description:     "xFacade managed identity badge and optional privacy shims.",
 		ContentScripts:  scripts,
 	}, "", "  ")
 	if err != nil {
