@@ -9,7 +9,9 @@ import (
 	"facade/backend/internal/launchcode"
 	"facade/backend/internal/logger"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -144,8 +146,13 @@ func (a *App) startupInitLaunchCode(log *logger.Logger) {
 }
 
 func (a *App) startupInitLaunchServer(log *logger.Logger) {
-	port := a.config.LaunchServer.Port
-	a.launchServer = launchcode.NewLaunchServer(a.launchCodeSvc, a, a.browserMgr, port)
+	configPort := a.config.LaunchServer.Port
+	host, port, err := launchcode.ResolveLaunchListen(os.Args, os.Getenv, configPort)
+	if err != nil {
+		log.Error("LaunchServer 监听地址无效", logger.F("error", err))
+		return
+	}
+	a.launchServer = launchcode.NewLaunchServerOn(host, port, a.launchCodeSvc, a, a.browserMgr)
 	a.launchServer.SetAPIAuthConfig(launchcode.APIAuthConfig{
 		Enabled: a.config.LaunchServer.Auth.Enabled,
 		APIKey:  a.config.LaunchServer.Auth.APIKey,
@@ -156,8 +163,9 @@ func (a *App) startupInitLaunchServer(log *logger.Logger) {
 		return
 	}
 	log.Info("LaunchServer 监听地址",
-		logger.F("url", fmt.Sprintf("http://127.0.0.1:%d", a.launchServer.Port())),
+		logger.F("url", fmt.Sprintf("http://%s", net.JoinHostPort(a.launchServer.Host(), strconv.Itoa(a.launchServer.Port())))),
 		logger.F("preferred_port", port),
+		logger.F("config_port", configPort),
 	)
 }
 

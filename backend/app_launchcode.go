@@ -4,6 +4,9 @@ import (
 	"facade/backend/internal/browser"
 	"facade/backend/internal/launchcode"
 	"fmt"
+	"net"
+	"os"
+	"strconv"
 	"time"
 )
 
@@ -101,6 +104,7 @@ func (a *App) BrowserInstanceStartByCode(code string) (*browser.Profile, error) 
 // GetLaunchServerInfo 返回 LaunchServer 的当前监听信息（Wails 绑定）
 func (a *App) GetLaunchServerInfo() map[string]interface{} {
 	preferredPort := 0
+	host := "127.0.0.1"
 	authRequested := false
 	authConfigured := false
 	authEnabled := false
@@ -113,9 +117,14 @@ func (a *App) GetLaunchServerInfo() map[string]interface{} {
 			authHeader = header
 		}
 	}
+	if resolvedHost, resolvedPort, err := launchcode.ResolveLaunchListen(os.Args, os.Getenv, preferredPort); err == nil {
+		host = resolvedHost
+		preferredPort = resolvedPort
+	}
 
 	actualPort := 0
 	if a.launchServer != nil {
+		host = a.launchServer.Host()
 		actualPort = a.launchServer.Port()
 		authRequested = a.launchServer.APIAuthRequested()
 		authConfigured = a.launchServer.APIAuthConfigured()
@@ -124,7 +133,7 @@ func (a *App) GetLaunchServerInfo() map[string]interface{} {
 	}
 
 	info := map[string]interface{}{
-		"host":          "127.0.0.1",
+		"host":          host,
 		"preferredPort": preferredPort,
 		"port":          actualPort,
 		"ready":         actualPort > 0,
@@ -136,7 +145,7 @@ func (a *App) GetLaunchServerInfo() map[string]interface{} {
 		},
 	}
 	if actualPort > 0 {
-		info["baseUrl"] = fmt.Sprintf("http://127.0.0.1:%d", actualPort)
+		info["baseUrl"] = fmt.Sprintf("http://%s", net.JoinHostPort(host, strconv.Itoa(actualPort)))
 	} else {
 		info["baseUrl"] = ""
 	}

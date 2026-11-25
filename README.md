@@ -132,6 +132,35 @@ curl -X POST http://localhost:19876/api/launch \
 
 **文档：** 启动应用后访问 `http://localhost:19876/swagger/`
 
+监听地址优先级：`-addr` > **`XFACADE_LISTEN_ADDR`** > `config.yaml` 的 `launch_server.port`。根路径 `/` 提供状态页（供 xLauncher 打开）。
+
+---
+
+## 安装到 xLauncher
+
+将桌面应用安装到 `~/.xTools/bin`，供 [xLauncher](../xLauncher) 发现并启动：
+
+```bash
+cd xFacade   # 或在 monorepo 根目录：make -C xFacade install
+make install
+```
+
+需要已有 `build/bin` 产物（或本机已安装 `wails` 以自动构建）。安装内容：
+
+- 可执行入口：`$(PREFIX)/bin/xFacade`（默认 `PREFIX=~/.xTools`）
+- 说明 sidecar：`xFacade.desc`
+- 应用目录：`$(PREFIX)/lib/xfacade/`（macOS 为 `.app` 包）
+
+xLauncher 会设置 **`XFACADE_LISTEN_ADDR=127.0.0.1:<port>`**，应用启动后 Launch API 在该地址就绪。手动运行示例：
+
+```bash
+XFACADE_LISTEN_ADDR=127.0.0.1:9001 ~/.xTools/bin/xFacade
+# 或
+~/.xTools/bin/xFacade -addr 127.0.0.1:9001
+```
+
+卸载：`make uninstall`。
+
 ---
 
 ## 数据目录

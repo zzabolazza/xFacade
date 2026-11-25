@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,25 +86,46 @@ type LaunchServer struct {
 	service    *LaunchCodeService
 	starter    BrowserStarter
 	browserMgr *browser.Manager
+	host       string
 	port       int
 	server     *http.Server
 	mu         sync.Mutex
-	authMu   sync.RWMutex
-	logMu    sync.Mutex
-	callLogs []LaunchCallRecord
-	apiAuth  APIAuthConfig
+	authMu     sync.RWMutex
+	logMu      sync.Mutex
+	callLogs   []LaunchCallRecord
+	apiAuth    APIAuthConfig
 }
 
-// NewLaunchServer 创建 LaunchServer
+// NewLaunchServer 创建 LaunchServer（默认绑定 127.0.0.1:port）
 func NewLaunchServer(service *LaunchCodeService, starter BrowserStarter, mgr *browser.Manager, port int) *LaunchServer {
+	return NewLaunchServerOn(defaultListenHost, port, service, starter, mgr)
+}
+
+// NewLaunchServerOn 创建绑定到指定 host:port 的 LaunchServer
+func NewLaunchServerOn(host string, port int, service *LaunchCodeService, starter BrowserStarter, mgr *browser.Manager) *LaunchServer {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = defaultListenHost
+	}
 	srv := &LaunchServer{
 		service:    service,
 		starter:    starter,
 		browserMgr: mgr,
+		host:       host,
 		port:       port,
 	}
 	srv.SetAPIAuthConfig(APIAuthConfig{})
 	return srv
+}
+
+// Host 返回当前（或偏好）监听主机。
+func (s *LaunchServer) Host() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.host == "" {
+		return defaultListenHost
+	}
+	return s.host
 }
 
 // Start 非阻塞启动 HTTP 服务。
@@ -113,22 +135,30 @@ func NewLaunchServer(service *LaunchCodeService, starter BrowserStarter, mgr *br
 func (s *LaunchServer) Start() error {
 	handler := s.buildHandler(true)
 
+	s.mu.Lock()
+	host := s.host
 	preferredPort := s.port
-	ln, port, err := bindLaunchListener(preferredPort)
+	s.mu.Unlock()
+	if host == "" {
+		host = defaultListenHost
+	}
+
+	ln, port, err := bindLaunchListener(host, preferredPort)
 	if err != nil {
 		return err
 	}
 
 	s.mu.Lock()
+	s.host = host
 	s.port = port
 	s.server = &http.Server{Handler: handler}
 	s.mu.Unlock()
 
 	log := logger.New("LaunchServer")
 	if preferredPort <= 0 {
-		log.Info("LaunchServer 使用随机端口", logger.F("port", port))
+		log.Info("LaunchServer 使用随机端口", logger.F("host", host), logger.F("port", port))
 	} else {
-		log.Info("LaunchServer 使用固定端口", logger.F("port", port))
+		log.Info("LaunchServer 使用固定端口", logger.F("host", host), logger.F("port", port))
 	}
 	auth := s.apiAuthConfig()
 	if auth.Active() {
@@ -136,7 +166,7 @@ func (s *LaunchServer) Start() error {
 	} else if auth.Requested() && !auth.Configured() {
 		log.Warn("LaunchServer API 认证配置未生效", logger.F("reason", "api_key is empty"), logger.F("header", auth.Header))
 	}
-	log.Info("LaunchServer 已启动", logger.F("port", port))
+	log.Info("LaunchServer 已启动", logger.F("url", fmt.Sprintf("http://%s", net.JoinHostPort(host, strconv.Itoa(port)))))
 
 	go func() {
 		if serveErr := s.server.Serve(ln); serveErr != nil && serveErr != http.ErrServerClosed {
@@ -147,9 +177,13 @@ func (s *LaunchServer) Start() error {
 	return nil
 }
 
-func bindLaunchListener(preferredPort int) (net.Listener, int, error) {
+func bindLaunchListener(host string, preferredPort int) (net.Listener, int, error) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = defaultListenHost
+	}
 	if preferredPort <= 0 {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
 		if err != nil {
 			return nil, 0, fmt.Errorf("自动分配端口失败: %w", err)
 		}
@@ -161,7 +195,7 @@ func bindLaunchListener(preferredPort int) (net.Listener, int, error) {
 		return ln, port, nil
 	}
 
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(preferredPort))
+	addr := net.JoinHostPort(host, strconv.Itoa(preferredPort))
 	ln, err := net.Listen("tcp", addr)
 	if err == nil {
 		return ln, preferredPort, nil
